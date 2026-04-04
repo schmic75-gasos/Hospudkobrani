@@ -7,7 +7,6 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#0F0A00"
     },
@@ -23,7 +22,6 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F0A00"
       },
       "package": "cz.fluffini.hospudkobrani",
@@ -53,12 +51,8 @@
         {
           "photosPermission": "Hospůdkobraní chce přistupovat k tvým fotkám."
         }
-      ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "VLOZ_EAS_PROJECT_ID_ZDE"
-      }
-    }
+      ],
+      "expo-font"
+    ]
   }
 }

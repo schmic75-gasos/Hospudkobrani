@@ -8,7 +8,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -201,14 +201,90 @@ const AuthScreen = ({ onLogin }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// LEAFLET HTML – generuje se dynamicky s aktuálními pub daty
+// ══════════════════════════════════════════════════════════════════════════════
+const buildLeafletHTML = (pubs, visitedIds, userLat, userLon) => {
+  const pubsJson = JSON.stringify(pubs.map(p => ({
+    id: p.id, name: p.name, type: p.type,
+    lat: p.latitude, lon: p.longitude,
+    visited: visitedIds.has(p.id),
+    avg_rating: p.avg_rating,
+  })));
+  const centerLat = userLat ?? 49.7384;
+  const centerLon = userLon ?? 13.3736;
+  const zoom = userLat ? 14 : 11;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body, #map { width:100%; height:100%; background:#1a1200; }
+  .beer-marker { display:flex; align-items:center; justify-content:center;
+    border-radius:50%; border:2.5px solid; font-size:18px; width:36px; height:36px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.6); background:#1A1200; }
+  .beer-marker.visited { border-color:#27AE60; background:#0A1A00; }
+  .beer-marker.unvisited { border-color:#C07D10; }
+  .beer-marker.big { width:44px; height:44px; font-size:22px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+var map = L.map('map', { zoomControl:true, rotate:false, attributionControl:true });
+map.setView([${centerLat}, ${centerLon}], ${zoom});
+
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '© OpenStreetMap'
+}).addTo(map);
+
+var pubs = ${pubsJson};
+
+pubs.forEach(function(pub) {
+  var cls = pub.visited ? 'beer-marker visited big' : 'beer-marker unvisited';
+  var icon = L.divIcon({
+    className: '',
+    html: '<div class="' + cls + '">🍺</div>',
+    iconSize: pub.visited ? [44,44] : [36,36],
+    iconAnchor: pub.visited ? [22,22] : [18,18],
+  });
+  var marker = L.marker([pub.lat, pub.lon], { icon: icon }).addTo(map);
+  marker.on('click', function() {
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type:'pubTap', id: pub.id }));
+  });
+});
+
+${userLat ? `
+var userIcon = L.divIcon({
+  className:'',
+  html:'<div style="width:16px;height:16px;border-radius:50%;background:#2980B9;border:3px solid white;box-shadow:0 0 8px rgba(41,128,185,0.8)"></div>',
+  iconSize:[16,16], iconAnchor:[8,8]
+});
+L.marker([${userLat},${userLon}], {icon:userIcon, zIndexOffset:1000}).addTo(map);
+` : ''}
+
+window.centerOnUser = function(lat, lon) {
+  map.setView([lat, lon], 16, {animate:true});
+};
+</script>
+</body>
+</html>`;
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAP SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const mapRef = useRef(null);
+  const webViewRef = useRef(null);
   const [pubs, setPubs] = useState([]);
   const [visitedIds, setVisitedIds] = useState(new Set());
   const [location, setLocation] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mapReady, setMapReady] = useState(false);
   const [selectedPub, setSelectedPub] = useState(null);
   const [detailModal, setDetailModal] = useState(false);
   const [logModal, setLogModal] = useState(false);
@@ -236,20 +312,15 @@ const MapScreen = ({ user }) => {
     if (status !== 'granted') return;
     const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
     setLocation(loc.coords);
-    mapRef.current?.animateToRegion({
-      latitude: loc.coords.latitude, longitude: loc.coords.longitude,
-      latitudeDelta: 0.02, longitudeDelta: 0.02,
-    }, 1000);
     Location.watchPositionAsync({ accuracy: Location.Accuracy.High, distanceInterval: 10 },
       l => setLocation(l.coords));
   };
 
   const centerOnMe = () => {
     if (!location) { Alert.alert('Poloha', 'Poloha není dostupná'); return; }
-    mapRef.current?.animateToRegion({
-      latitude: location.latitude, longitude: location.longitude,
-      latitudeDelta: 0.01, longitudeDelta: 0.01,
-    }, 800);
+    webViewRef.current?.injectJavaScript(
+      `window.centerOnUser(${location.latitude}, ${location.longitude}); true;`
+    );
   };
 
   const openPub = (pub) => {
@@ -273,36 +344,44 @@ const MapScreen = ({ user }) => {
     setLogModal(true);
   };
 
+  // Zprávy z Leaflet mapy
+  const onWebViewMessage = (e) => {
+    try {
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg.type === 'pubTap') {
+        const pub = pubs.find(p => p.id === msg.id);
+        if (pub) openPub(pub);
+      }
+    } catch {}
+  };
+
+  const leafletHTML = useMemo(
+    () => buildLeafletHTML(pubs, visitedIds, location?.latitude, location?.longitude),
+    [pubs, visitedIds, location]
+  );
+
   if (loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large" /></View>;
 
   return (
     <View style={{ flex: 1 }}>
-      <MapView
-        ref={mapRef}
+      <WebView
+        ref={webViewRef}
+        source={{ html: leafletHTML }}
         style={{ flex: 1 }}
-        provider={null}
-        initialRegion={{ latitude: 49.7384, longitude: 13.3736, latitudeDelta: 0.1, longitudeDelta: 0.1 }}
-        rotateEnabled={false}
-        showsUserLocation={true}
-        showsMyLocationButton={false}
-        mapType="none"
-      >
-        {/* OpenStreetMap tiles – zdarma, bez API klíče */}
-        <UrlTile
-          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-          maximumZ={19}
-          flipY={false}
-          tileSize={256}
-          shouldReplaceMapContent={true}
-          zIndex={-1}
-        />
-        {pubs.map(pub => (
-          <Marker key={pub.id} coordinate={{ latitude: pub.latitude, longitude: pub.longitude }}
-            onPress={() => openPub(pub)} tracksViewChanges={false}>
-            <BeerMarker visited={visitedIds.has(pub.id)} size={visitedIds.has(pub.id) ? 44 : 36} />
-          </Marker>
-        ))}
-      </MapView>
+        onMessage={onWebViewMessage}
+        onLoad={() => setMapReady(true)}
+        javaScriptEnabled
+        domStorageEnabled
+        originWhitelist={['*']}
+        mixedContentMode="always"
+        scrollEnabled={false}
+      />
+
+      {!mapReady && (
+        <View style={[StyleSheet.absoluteFill, s.center]}>
+          <ActivityIndicator color={C.amber} size="large" />
+        </View>
+      )}
 
       {/* HUD */}
       <View style={s.mapHud}>
