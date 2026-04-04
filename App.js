@@ -8,7 +8,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -280,14 +280,22 @@ const MapScreen = ({ user }) => {
       <MapView
         ref={mapRef}
         style={{ flex: 1 }}
-        provider={PROVIDER_DEFAULT}
+        provider={null}
         initialRegion={{ latitude: 49.7384, longitude: 13.3736, latitudeDelta: 0.1, longitudeDelta: 0.1 }}
         rotateEnabled={false}
         showsUserLocation={true}
         showsMyLocationButton={false}
-        mapType="standard"
-        customMapStyle={darkMapStyle}
+        mapType="none"
       >
+        {/* OpenStreetMap tiles – zdarma, bez API klíče */}
+        <UrlTile
+          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maximumZ={19}
+          flipY={false}
+          tileSize={256}
+          shouldReplaceMapContent={true}
+          zIndex={-1}
+        />
         {pubs.map(pub => (
           <Marker key={pub.id} coordinate={{ latitude: pub.latitude, longitude: pub.longitude }}
             onPress={() => openPub(pub)} tracksViewChanges={false}>
@@ -970,19 +978,6 @@ export default function App() {
     </View>
   );
 }
-
-// ─── DARK MAP STYLE ───────────────────────────────────────────────────────────
-const darkMapStyle = [
-  { elementType:'geometry', stylers:[{ color:'#1a1200' }] },
-  { elementType:'labels.text.fill', stylers:[{ color:'#f5a623' }] },
-  { elementType:'labels.text.stroke', stylers:[{ color:'#0f0a00' }] },
-  { featureType:'road', elementType:'geometry', stylers:[{ color:'#2d1f00' }] },
-  { featureType:'road', elementType:'geometry.stroke', stylers:[{ color:'#3d2800' }] },
-  { featureType:'water', elementType:'geometry', stylers:[{ color:'#0d1b2a' }] },
-  { featureType:'poi', elementType:'geometry', stylers:[{ color:'#1f1500' }] },
-  { featureType:'transit', elementType:'geometry', stylers:[{ color:'#2d1f00' }] },
-  { featureType:'administrative', elementType:'geometry.stroke', stylers:[{ color:'#7a5000' }] },
-];
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
