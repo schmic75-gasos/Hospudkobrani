@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Hospůdkobraní",
+    "slug": "hospudkobrani",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0A00"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "cz.fluffini.hospudkobrani",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Potřebujeme tvou polohu pro ověření, že jsi u hospůdky.",
+        "NSLocationAlwaysUsageDescription": "Potřebujeme tvou polohu pro ověření, že jsi u hospůdky.",
+        "NSCameraUsageDescription": "Fotit hospůdky!",
+        "NSPhotoLibraryUsageDescription": "Přidat fotku z galerie."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F0A00"
+      },
+      "package": "cz.fluffini.hospudkobrani",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "VLOZ_GOOGLE_MAPS_API_KEY_ZDE"
+        }
+      }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Potřebujeme tvou polohu pro ověření, že jsi u hospůdky."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Hospůdkobraní chce přistupovat k tvým fotkám."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "VLOZ_EAS_PROJECT_ID_ZDE"
+      }
+    }
+  }
+}
