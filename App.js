@@ -1,7 +1,7 @@
 /**
- * Hospůdkobraní – App.js v1.2
+ * Hospůdkobraní – App.js v1.4
  * Změny: Komunita tab (žebříček, chaty, hledání, galerie), Prvochlasty,
- *        nové typy výzev, renovovaný profil, nativní mapa přes react-native-maps + UrlTile
+ *        nové typy výzev, renovovaný profil, WebView + Leaflet s tile cache
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -13,7 +13,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -33,10 +33,72 @@ const C = {
 
 // ─── TILE LAYERS ──────────────────────────────────────────────────────────────
 const TILES = [
-  { key:'osm',    label:'OpenStreetMap Carto', url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attrib:'© OpenStreetMap' },
-  { key:'locus',  label:'Locus Map',           url:'https://tile.thunderforest.com/locus-4za/{z}/{x}/{y}.png?apikey=f944003b5ba34ff3a30dafe96e581f06', attrib:'© Thunderforest, © OSM' },
-  { key:'custom', label:'Vlastní vrstva',       url:'', attrib:'© Vlastní' },
+  { key:'osm',   label:'OpenStreetMap', url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',                                                          attrib:'© OpenStreetMap contributors' },
+  { key:'locus', label:'Locus Map',     url:'https://tile.thunderforest.com/locus-4za/{z}/{x}/{y}.png?apikey=f944003b5ba34ff3a30dafe96e581f06', attrib:'© Thunderforest, © OSM' },
 ];
+
+// ─── LEAFLET HTML (pro WebView) ───────────────────────────────────────────────
+const MAP_HTML = `<!DOCTYPE html>
+<html><head>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}html,body,#map{width:100%;height:100vh}
+    .pin{width:30px;height:30px;border-radius:50%;background:#F5A623;border:2px solid #C07D10;
+         display:flex;align-items:center;justify-content:center;font-size:16px}
+    .pin.v{background:#27AE60;border-color:#1e8449}
+  </style>
+</head><body><div id="map"></div><script>
+  var LAYERS={
+    osm:  {url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',attr:'\u00a9 OpenStreetMap contributors'},
+    locus:{url:'https://tile.thunderforest.com/locus-4za/{z}/{x}/{y}.png?apikey=f944003b5ba34ff3a30dafe96e581f06',attr:'\u00a9 Thunderforest, \u00a9 OSM'}
+  };
+  var CACHE='hospudka-v1';
+  var CachedLayer=L.TileLayer.extend({
+    createTile:function(c,done){
+      var img=document.createElement('img');
+      img.setAttribute('role','presentation');
+      var url=this.getTileUrl(c);
+      if(!('caches' in window)){
+        img.src=url;img.onload=function(){done(null,img);};img.onerror=function(e){done(e,img);};return img;
+      }
+      caches.open(CACHE).then(function(cache){
+        return cache.match(url).then(function(hit){
+          if(hit)return hit.blob();
+          return fetch(url).then(function(r){if(r.ok)cache.put(url,r.clone());return r.blob();});
+        });
+      }).then(function(b){img.src=URL.createObjectURL(b);done(null,img);}).catch(function(e){done(e,img);});
+      return img;
+    }
+  });
+  var map=L.map('map',{zoomControl:true}).setView([49.7384,13.3736],9);
+  var active=new CachedLayer(LAYERS.osm.url,{attribution:LAYERS.osm.attr,maxZoom:19});
+  active.addTo(map);
+  var mk={};
+  function icon(v){return L.divIcon({className:'',html:'<div class="pin'+(v?' v':'')+'">\ud83c\udf7a<\/div>',iconSize:[30,30],iconAnchor:[15,15]});}
+  function postRN(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify(m));}
+  function handle(e){
+    var msg;try{msg=JSON.parse(e.data);}catch(err){return;}
+    if(msg.type==='pubs'){
+      Object.keys(mk).forEach(function(k){mk[k].remove();});mk={};
+      msg.pubs.forEach(function(p){
+        var m=L.marker([p.lat,p.lng],{icon:icon(p.v)}).addTo(map);
+        m.on('click',function(){postRN({type:'pubTap',id:p.id});});
+        mk[p.id]=m;
+      });
+    }else if(msg.type==='flyTo'){
+      map.flyTo([msg.lat,msg.lng],msg.zoom||14);
+    }else if(msg.type==='setLayer'){
+      map.removeLayer(active);
+      var cfg=LAYERS[msg.key];
+      if(cfg){active=new CachedLayer(cfg.url,{attribution:cfg.attr,maxZoom:19});active.addTo(map);}
+    }
+  }
+  document.addEventListener('message',handle);
+  window.addEventListener('message',handle);
+  window.onload=function(){postRN({type:'ready'});};
+<\/script></body></html>`;
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 const getToken = () => AsyncStorage.getItem('auth_token');
@@ -367,51 +429,42 @@ const FilterModal = ({ filters, onApply, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // MAP LAYER MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-const LayerModal = ({ curKey, customUrl, onSelect, onClose }) => {
-  const [lc, setLc] = useState(customUrl||'');
-  return (
-    <Modal visible animationType="slide" transparent>
-      <View style={s.modalOverlay}>
-        <View style={s.modalCard}>
-          <View style={s.modalHeader}>
-            <Text style={s.modalTitle}>Mapová vrstva</Text>
-            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
-          </View>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {TILES.map(t=>(
-              <TouchableOpacity key={t.key} style={[s.layerRow,curKey===t.key&&{borderBottomColor:C.amber}]}
-                onPress={()=>{
-                  if (t.key==='custom'&&!lc.trim()){Alert.alert('Vlastní vrstva','Vyplň URL níže.');return;}
-                  onSelect(t.key,t.key==='custom'?lc:t.url,t.attrib);onClose();
-                }}>
-                <Ionicons name="map-outline" size={20} color={curKey===t.key?C.amber:C.creamDim}/>
-                <View style={{flex:1,marginLeft:10}}>
-                  <Text style={[s.layerLabel,curKey===t.key&&{color:C.amber}]}>{t.label}</Text>
-                  {t.key!=='custom'&&<Text style={s.dimText} numberOfLines={1}>{t.url.split('?')[0]}</Text>}
-                </View>
-                {curKey===t.key&&<Ionicons name="checkmark-circle" size={20} color={C.amber}/>}
-              </TouchableOpacity>
-            ))}
-            <Text style={[s.secLabel,{marginTop:8}]}>URL vlastní vrstvy</Text>
-            <TextInput style={s.input} placeholder="https://tiles.example.com/{z}/{x}/{y}.png"
-              placeholderTextColor={C.creamDim} value={lc} onChangeText={setLc}
-              autoCapitalize="none" autoCorrect={false}/>
-          </ScrollView>
+const LayerModal = ({ curKey, onSelect, onClose }) => (
+  <Modal visible animationType="slide" transparent>
+    <View style={s.modalOverlay}>
+      <View style={s.modalCard}>
+        <View style={s.modalHeader}>
+          <Text style={s.modalTitle}>Mapová vrstva</Text>
+          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
         </View>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {TILES.map(t=>(
+            <TouchableOpacity key={t.key} style={[s.layerRow,curKey===t.key&&{borderBottomColor:C.amber}]}
+              onPress={()=>{onSelect(t.key,t.url,t.attrib);onClose();}}>
+              <Ionicons name="map-outline" size={20} color={curKey===t.key?C.amber:C.creamDim}/>
+              <View style={{flex:1,marginLeft:10}}>
+                <Text style={[s.layerLabel,curKey===t.key&&{color:C.amber}]}>{t.label}</Text>
+                <Text style={s.dimText} numberOfLines={1}>{t.url.split('?')[0]}</Text>
+              </View>
+              {curKey===t.key&&<Ionicons name="checkmark-circle" size={20} color={C.amber}/>}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
-    </Modal>
-  );
-};
+    </View>
+  </Modal>
+);
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MAP SCREEN – native react-native-maps + UrlTile
+// MAP SCREEN – WebView + Leaflet
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const mapRef = useRef(null);
+  const webViewRef = useRef(null);
   const [pubs, setPubs]           = useState([]);
   const [visited, setVisited]     = useState(new Set());
   const [loc, setLoc]             = useState(null);
   const [loading, setLoading]     = useState(true);
+  const [mapReady, setMapReady]   = useState(false);
   const [selPub, setSelPub]       = useState(null);
   const [showSheet, setShowSheet] = useState(false);
   const [showInfo, setShowInfo]   = useState(false);
@@ -420,9 +473,6 @@ const MapScreen = ({ user }) => {
   const [layerMod, setLayerMod]   = useState(false);
   const [filters, setFilters]     = useState({...DEF_FILTERS});
   const [tileKey, setTileKey]     = useState('osm');
-  const [tileUrl, setTileUrl]     = useState(TILES[0].url);
-  const [tileAttrib, setTileAttrib] = useState(TILES[0].attrib);
-  const [customUrl, setCustomUrl] = useState('');
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -438,12 +488,14 @@ const MapScreen = ({ user }) => {
   useEffect(()=>{loadData();setupLoc();loadPrefs();},[]);
 
   const loadPrefs = async () => {
-    const [tk,tu,ta,cu] = await Promise.all([
-      AsyncStorage.getItem('tk'),AsyncStorage.getItem('tu'),
-      AsyncStorage.getItem('ta'),AsyncStorage.getItem('cu'),
-    ]);
-    if(tk)setTileKey(tk); if(tu)setTileUrl(tu);
-    if(ta)setTileAttrib(ta); if(cu)setCustomUrl(cu);
+    const tk = await AsyncStorage.getItem('tk');
+    if (tk && TILES.find(t=>t.key===tk)) setTileKey(tk);
+  };
+
+  const sendToWebView = msg => {
+    webViewRef.current?.injectJavaScript(
+      `handle({data:${JSON.stringify(JSON.stringify(msg))}});true;`
+    );
   };
 
   const loadData = async () => {
@@ -462,10 +514,10 @@ const MapScreen = ({ user }) => {
     if(status!=='granted')return;
     const l = await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.High});
     setLoc(l.coords);
-    mapRef.current?.animateToRegion({latitude:l.coords.latitude,longitude:l.coords.longitude,latitudeDelta:0.01,longitudeDelta:0.01},800);
     Location.watchPositionAsync({accuracy:Location.Accuracy.High,distanceInterval:5},ll=>setLoc(ll.coords));
   };
 
+  // filtered MUSÍ být deklarováno před useEffect co jej používá v dep array
   const filtered = useMemo(()=>pubs.filter(p=>{
     if(filters.visited==='visited'  &&!visited.has(p.id))return false;
     if(filters.visited==='unvisited'&& visited.has(p.id))return false;
@@ -476,6 +528,25 @@ const MapScreen = ({ user }) => {
     if(filters.beer?.trim()&&!p.beers?.toLowerCase().includes(filters.beer.toLowerCase()))return false;
     return true;
   }),[pubs,visited,filters]);
+
+  // Sync markers whenever filtered pubs or visited set changes
+  useEffect(()=>{
+    if(!mapReady||pubs.length===0)return;
+    const data=filtered.map(p=>({id:p.id,lat:p.latitude,lng:p.longitude,v:visited.has(p.id)}));
+    sendToWebView({type:'pubs',pubs:data});
+  },[mapReady,filtered,visited]);
+
+  // Fly to user location once map and loc are both ready
+  useEffect(()=>{
+    if(!mapReady||!loc)return;
+    sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
+  },[mapReady,loc]);
+
+  const onWebViewMessage = e => {
+    const msg=JSON.parse(e.nativeEvent.data);
+    if(msg.type==='ready'){setMapReady(true);}
+    else if(msg.type==='pubTap'){const pub=pubs.find(p=>p.id===msg.id);if(pub)openPub(pub);}
+  };
 
   const openPub = pub => {
     setSelPub(pub); setShowSheet(true);
@@ -493,38 +564,26 @@ const MapScreen = ({ user }) => {
     setLogModal(true);
   };
   const applyLayer = (key,url,attrib)=>{
-    const a=attrib||TILES.find(t=>t.key===key)?.attrib||'© Map';
-    setTileKey(key);setTileUrl(url);setTileAttrib(a);
-    if(key==='custom')setCustomUrl(url);
-    AsyncStorage.setItem('tk',key);AsyncStorage.setItem('tu',url);
-    AsyncStorage.setItem('ta',a);
-    if(key==='custom')AsyncStorage.setItem('cu',url);
+    setTileKey(key);
+    sendToWebView({type:'setLayer',key});
+    AsyncStorage.setItem('tk',key);
   };
 
   if(loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
 
   return (
     <View style={{flex:1}}>
-      <MapView
-        ref={mapRef}
+      <WebView
+        ref={webViewRef}
+        source={{html:MAP_HTML}}
         style={{flex:1}}
-        provider={PROVIDER_DEFAULT}
-        mapType="none"
-        rotateEnabled={false}
-        showsUserLocation={true}
-        showsMyLocationButton={false}
-        initialRegion={{latitude:49.7384,longitude:13.3736,latitudeDelta:0.1,longitudeDelta:0.1}}
-      >
-        <UrlTile urlTemplate={tileUrl} maximumZ={19} flipY={false} tileSize={256} zIndex={1}/>
-        {filtered.map(pub=>(
-          <Marker key={pub.id} coordinate={{latitude:pub.latitude,longitude:pub.longitude}}
-            onPress={()=>openPub(pub)} tracksViewChanges={false} zIndex={2}>
-            <View style={[s.mapPin, visited.has(pub.id)&&s.mapPinVisited]}>
-              <Ionicons name="beer-outline" size={visited.has(pub.id)?20:16} color={visited.has(pub.id)?C.green:C.amber}/>
-            </View>
-          </Marker>
-        ))}
-      </MapView>
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        cacheEnabled={true}
+        userAgent="Hospudkobrani/1.4 (React Native)"
+        originWhitelist={['*']}
+        onMessage={onWebViewMessage}
+      />
 
       {/* HUD */}
       <View style={s.mapHud}>
@@ -542,7 +601,7 @@ const MapScreen = ({ user }) => {
       <View style={s.mapCtrl}>
         <TouchableOpacity style={s.mapBtn} onPress={()=>{
           if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
-          mapRef.current?.animateToRegion({latitude:loc.latitude,longitude:loc.longitude,latitudeDelta:0.01,longitudeDelta:0.01},800);
+          sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
         }}>
           <Ionicons name="locate-outline" size={22} color={C.amber}/>
         </TouchableOpacity>
@@ -614,7 +673,7 @@ const MapScreen = ({ user }) => {
           }}/>
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
-      {layerMod&&<LayerModal curKey={tileKey} customUrl={customUrl} onSelect={applyLayer} onClose={()=>setLayerMod(false)}/>}
+      {layerMod&&<LayerModal curKey={tileKey} onSelect={applyLayer} onClose={()=>setLayerMod(false)}/>}
     </View>
   );
 };
