@@ -44,141 +44,103 @@ static jsi::Value touchEventPayload(
 
 void TouchEventEmitter::dispatchTouchEvent(
     std::string type,
-    const TouchEvent& event,
-    EventPriority priority,
+    TouchEvent event,
     RawEvent::Category category) const {
   dispatchEvent(
       std::move(type),
-      [event](jsi::Runtime& runtime) {
+      [event = std::move(event)](jsi::Runtime& runtime) {
         return touchEventPayload(runtime, event);
       },
-      priority,
       category);
 }
 
 void TouchEventEmitter::dispatchPointerEvent(
     std::string type,
-    const PointerEvent& event,
-    EventPriority priority,
+    PointerEvent event,
     RawEvent::Category category) const {
   dispatchEvent(
       std::move(type),
-      std::make_shared<PointerEvent>(event),
-      priority,
+      std::make_shared<PointerEvent>(std::move(event)),
       category);
 }
 
-void TouchEventEmitter::onTouchStart(const TouchEvent& event) const {
+void TouchEventEmitter::onTouchStart(TouchEvent event) const {
   dispatchTouchEvent(
-      "touchStart",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousStart);
+      "touchStart", std::move(event), RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onTouchMove(const TouchEvent& event) const {
-  dispatchUniqueEvent("touchMove", [event](jsi::Runtime& runtime) {
-    return touchEventPayload(runtime, event);
-  });
+void TouchEventEmitter::onTouchMove(TouchEvent event) const {
+  dispatchUniqueEvent(
+      "touchMove", [event = std::move(event)](jsi::Runtime& runtime) {
+        return touchEventPayload(runtime, event);
+      });
 }
 
-void TouchEventEmitter::onTouchEnd(const TouchEvent& event) const {
+void TouchEventEmitter::onTouchEnd(TouchEvent event) const {
   dispatchTouchEvent(
-      "touchEnd",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousEnd);
+      "touchEnd", std::move(event), RawEvent::Category::ContinuousEnd);
 }
 
-void TouchEventEmitter::onTouchCancel(const TouchEvent& event) const {
+void TouchEventEmitter::onTouchCancel(TouchEvent event) const {
   dispatchTouchEvent(
-      "touchCancel",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousEnd);
+      "touchCancel", std::move(event), RawEvent::Category::ContinuousEnd);
 }
 
-void TouchEventEmitter::onClick(const PointerEvent& event) const {
+void TouchEventEmitter::onClick(PointerEvent event) const {
+  dispatchPointerEvent("click", std::move(event), RawEvent::Category::Discrete);
+}
+
+void TouchEventEmitter::onPointerCancel(PointerEvent event) const {
   dispatchPointerEvent(
-      "click",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::Discrete);
+      "pointerCancel", std::move(event), RawEvent::Category::ContinuousEnd);
 }
 
-void TouchEventEmitter::onPointerCancel(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerDown(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerCancel",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousEnd);
+      "pointerDown", std::move(event), RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onPointerDown(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerMove(PointerEvent event) const {
+  dispatchUniqueEvent(
+      "pointerMove", std::make_shared<PointerEvent>(std::move(event)));
+}
+
+void TouchEventEmitter::onPointerUp(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerDown",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousStart);
+      "pointerUp", std::move(event), RawEvent::Category::ContinuousEnd);
 }
 
-void TouchEventEmitter::onPointerMove(const PointerEvent& event) const {
-  dispatchUniqueEvent("pointerMove", std::make_shared<PointerEvent>(event));
-}
-
-void TouchEventEmitter::onPointerUp(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerEnter(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerUp",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousEnd);
+      "pointerEnter", std::move(event), RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onPointerEnter(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerLeave(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerEnter",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousStart);
+      "pointerLeave", std::move(event), RawEvent::Category::ContinuousEnd);
 }
 
-void TouchEventEmitter::onPointerLeave(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerOver(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerLeave",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousEnd);
+      "pointerOver", std::move(event), RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onPointerOver(const PointerEvent& event) const {
+void TouchEventEmitter::onPointerOut(PointerEvent event) const {
   dispatchPointerEvent(
-      "pointerOver",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousStart);
+      "pointerOut", std::move(event), RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onPointerOut(const PointerEvent& event) const {
-  dispatchPointerEvent(
-      "pointerOut",
-      event,
-      EventPriority::AsynchronousBatched,
-      RawEvent::Category::ContinuousStart);
-}
-
-void TouchEventEmitter::onGotPointerCapture(const PointerEvent& event) const {
+void TouchEventEmitter::onGotPointerCapture(PointerEvent event) const {
   dispatchPointerEvent(
       "gotPointerCapture",
-      event,
-      EventPriority::AsynchronousBatched,
+      std::move(event),
       RawEvent::Category::ContinuousStart);
 }
 
-void TouchEventEmitter::onLostPointerCapture(const PointerEvent& event) const {
+void TouchEventEmitter::onLostPointerCapture(PointerEvent event) const {
   dispatchPointerEvent(
       "lostPointerCapture",
-      event,
-      EventPriority::AsynchronousBatched,
+      std::move(event),
       RawEvent::Category::ContinuousEnd);
 }
 

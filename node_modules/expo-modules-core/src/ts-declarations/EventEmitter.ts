@@ -24,9 +24,24 @@ export type EventSubscription = {
  */
 export declare class EventEmitter<TEventsMap extends EventsMap = Record<never, never>> {
   /**
+   * A dummy private property with the given generic type. It is required for TypeScript to correctly infer this subtype.
+   * E.g. `useEvent` would not be able to infer the events map which results in accepting any string as the event name.
+   * @private
+   * @deprecated
+   */
+  _TEventsMap_DONT_USE_IT?: TEventsMap;
+
+  /**
    * Creates a new event emitter instance.
    */
   constructor();
+
+  /**
+   * @deprecated As of Expo SDK 52 the given object is already an EventEmitter.
+   * Creating a new one is not necessary.
+   * @hidden
+   */
+  constructor(object: EventEmitter);
 
   /**
    * Adds a listener for the given event name.
@@ -50,7 +65,7 @@ export declare class EventEmitter<TEventsMap extends EventsMap = Record<never, n
   removeAllListeners(eventName: keyof TEventsMap): void;
 
   /**
-   * Synchronously calls all of the listeners attached to that specific event.
+   * Synchronously calls all the listeners attached to that specific event.
    * The event can include any number of arguments that will be passed to the listeners.
    */
   emit<EventName extends keyof TEventsMap>(
@@ -62,4 +77,16 @@ export declare class EventEmitter<TEventsMap extends EventsMap = Record<never, n
    * Returns a number of listeners added to the given event.
    */
   listenerCount<EventName extends keyof TEventsMap>(eventName: EventName): number;
+
+  /**
+   * Function that is automatically invoked when the first listener for an event with the given name is added.
+   * Override it in a subclass to perform some additional setup once the event started being observed.
+   */
+  startObserving?<EventName extends keyof TEventsMap>(eventName: EventName): void;
+
+  /**
+   * Function that is automatically invoked when the last listener for an event with the given name is removed.
+   * Override it in a subclass to perform some additional cleanup once the event is no longer observed.
+   */
+  stopObserving?<EventName extends keyof TEventsMap>(eventName: EventName): void;
 }

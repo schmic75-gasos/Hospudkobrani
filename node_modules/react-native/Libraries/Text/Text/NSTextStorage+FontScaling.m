@@ -19,6 +19,11 @@ typedef NS_OPTIONS(NSInteger, RCTTextSizeComparisonOptions) {
                minimumFontSize:(CGFloat)minimumFontSize
                maximumFontSize:(CGFloat)maximumFontSize
 {
+  // Don't scale the font if it already fits
+  if ([self compareToSize:size thresholdRatio:0.01] & RCTTextSizeComparisonSmaller) {
+    return;
+  }
+
   CGFloat bottomRatio = 1.0 / 128.0;
   CGFloat topRatio = 128.0;
   CGFloat ratio = 1.0;
@@ -60,6 +65,15 @@ typedef NS_OPTIONS(NSInteger, RCTTextSizeComparisonOptions) {
 {
   NSLayoutManager *layoutManager = self.layoutManagers.firstObject;
   NSTextContainer *textContainer = layoutManager.textContainers.firstObject;
+
+  // A workaround for truncatedGlyphRangeInLineFragmentForGlyphAtIndex returning NSNotFound when text has only
+  // one character and it gets truncated
+  if ([self length] == 1) {
+    CGSize characterSize = [[self string] sizeWithAttributes:[self attributesAtIndex:0 effectiveRange:nil]];
+    if (characterSize.width > size.width) {
+      return RCTTextSizeComparisonLarger;
+    }
+  }
 
   [layoutManager ensureLayoutForTextContainer:textContainer];
 

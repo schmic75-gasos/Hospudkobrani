@@ -1,5 +1,4 @@
 "use strict";
-/* eslint-disable */
 /* (The MIT License)
 
 Copyright (c) 2010-2017 Nathan Rajlich <nathan@tootallnate.net>
@@ -28,7 +27,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parse = void 0;
+exports.parse = parse;
 const xmldom_1 = require("@xmldom/xmldom");
 const assert_1 = __importDefault(require("assert"));
 const TEXT_NODE = 3;
@@ -48,7 +47,7 @@ function shouldIgnoreNode(node) {
 /**
  * Check if the node is empty. Some plist file has such node:
  * <key />
- * this node shoud be ignored.
+ * this node should be ignored.
  *
  * @see https://github.com/TooTallNate/plist.js/issues/66
  * @param {Element} node
@@ -66,17 +65,16 @@ function isEmptyNode(node) {
  * @api public
  */
 function parse(xml) {
-    // prevent the parser from logging non-fatel errors
+    // prevent the parser from logging non-fatal errors
     const doc = new xmldom_1.DOMParser({ errorHandler() { } }).parseFromString(xml);
     (0, assert_1.default)(doc.documentElement.nodeName === 'plist', 'malformed document. First element should be <plist>');
     let plist = parsePlistXML(doc.documentElement);
     // the root <plist> node gets interpreted as an Array,
     // so pull out the inner data first
-    if (plist.length == 1)
+    if (plist.length === 1)
         plist = plist[0];
     return plist;
 }
-exports.parse = parse;
 /**
  * Convert an XML based plist document into a JSON representation.
  *

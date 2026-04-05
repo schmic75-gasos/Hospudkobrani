@@ -6,7 +6,7 @@
 -keep class * implements expo.modules.kotlin.records.Record {
   *;
 }
--keep class * extends expo.modules.kotlin.sharedobjects.SharedRef
+-keep class * extends expo.modules.kotlin.sharedobjects.SharedObject
 -keep enum * implements expo.modules.kotlin.types.Enumerable {
   *;
 }
@@ -28,4 +28,12 @@
 
 -keepclassmembers class * {
   expo.modules.kotlin.viewevent.ViewEventDelegate *;
+}
+
+-keep class * implements expo.modules.kotlin.views.ComposeProps {
+  *;
+}
+
+-keepnames class * implements expo.modules.kotlin.views.ExpoView {
+  *;
 }

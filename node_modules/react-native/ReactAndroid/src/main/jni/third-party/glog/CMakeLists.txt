@@ -6,18 +6,10 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_VERBOSE_MAKEFILE on)
 
-add_compile_options(
-        -Wwrite-strings
-        -Woverloaded-virtual
-        -Wno-sign-compare
-        -DNDEBUG
-        -g
-        -O2
-        -DHAVE_PREAD=1
-)
+include(${REACT_COMMON_DIR}/cmake-utils/react-native-flags.cmake)
 
 add_library(glog
-        SHARED
+        STATIC
         glog-0.3.5/src/demangle.cc
         glog-0.3.5/src/logging.cc
         glog-0.3.5/src/raw_logging.cc
@@ -33,3 +25,16 @@ target_include_directories(glog PRIVATE .)
 # For consumer, we set the `exported` dir as the
 # include folder.
 target_include_directories(glog PUBLIC exported)
+
+target_compile_reactnative_options(glog PRIVATE)
+
+target_compile_options(glog PRIVATE
+        -Wwrite-strings
+        -Woverloaded-virtual
+        -Wno-sign-compare
+        -DNDEBUG
+        -g
+        -O2
+        -DHAVE_PREAD=1
+)
+

@@ -29,7 +29,7 @@ internal struct DynamicSharedObjectType: AnyDynamicType {
   }
 
   func cast<ValueType>(_ value: ValueType, appContext: AppContext) throws -> Any {
-    if let value = value as? SharedObject, type(of: value) == innerType {
+    if let value = value as? SharedObject {
       // Given value is a shared object already
       return value
     }
@@ -58,8 +58,39 @@ internal struct DynamicSharedObjectType: AnyDynamicType {
     throw NativeSharedObjectNotFoundException()
   }
 
+  func convertResult<ResultType>(_ result: ResultType, appContext: AppContext) throws -> Any {
+    // Postpone object creation to execute on the JS thread.
+    JavaScriptSharedObjectBinding.init {
+      // If the result is a native shared object, create its JS representation and add the pair to the registry of shared objects.
+      if let sharedObject = result as? SharedObject {
+        // If the JS object already exists, just return it.
+        if let jsObject = sharedObject.getJavaScriptObject() {
+          return jsObject
+        }
+        guard let jsObject = try? appContext.newObject(nativeClassId: typeIdentifier) else {
+          // Throwing is not possible here due to swift-objC interop.
+          log.warn("Unable to create a JS object for \(description)")
+          return JavaScriptObject()
+        }
+
+        // Add newly created objects to the registry.
+        appContext.sharedObjectRegistry.add(native: sharedObject, javaScript: jsObject)
+
+        return jsObject
+      }
+      return JavaScriptObject()
+    }
+  }
+
   var description: String {
     return "SharedObject<\(innerType)>"
+  }
+
+  func castToJS<ValueType>(_ value: ValueType, appContext: AppContext) throws -> JavaScriptValue {
+    if let value = value as? JavaScriptSharedObjectBinding {
+      return try JavaScriptValue.from(value.get(), runtime: appContext.runtime)
+    }
+    throw NativeSharedObjectNotFoundException()
   }
 }
 

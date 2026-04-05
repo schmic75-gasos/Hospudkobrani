@@ -11,7 +11,7 @@
 'use strict';
 
 if (__DEV__) {
-  const DevSettings = require('../Utilities/DevSettings');
+  const DevSettings = require('../Utilities/DevSettings').default;
 
   if (typeof DevSettings.reload !== 'function') {
     throw new Error('Could not find the reload() implementation.');
@@ -36,10 +36,6 @@ if (__DEV__) {
     register: ReactRefreshRuntime.register,
 
     performReactRefresh() {
-      if (ReactRefreshRuntime.hasUnrecoverableErrors()) {
-        DevSettings.reload('Fast Refresh - Unrecoverable');
-        return;
-      }
       ReactRefreshRuntime.performReactRefresh();
       DevSettings.onFastRefresh();
     },

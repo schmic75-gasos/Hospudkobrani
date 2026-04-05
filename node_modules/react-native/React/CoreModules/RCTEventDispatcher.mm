@@ -54,6 +54,12 @@ RCT_EXPORT_MODULE()
   _eventsDispatchScheduled = NO;
   _observers = [NSHashTable weakObjectsHashTable];
   _observersLock = [NSRecursiveLock new];
+
+  NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
+  [defaultCenter addObserver:self
+                    selector:@selector(_notifyEventDispatcherObserversOfEvent_DEPRECATED:)
+                        name:RCTNotifyEventDispatcherObserversOfEvent_DEPRECATED
+                      object:nil];
 }
 
 - (void)sendViewEventWithName:(NSString *)name reactTag:(NSNumber *)reactTag
@@ -101,6 +107,7 @@ RCT_EXPORT_MODULE()
           break;
         case '\n':
           key = @"Enter";
+          break;
         default:
           break;
       }
@@ -222,6 +229,15 @@ RCT_EXPORT_MODULE()
 
   for (NSNumber *eventId in eventQueue) {
     [self dispatchEvent:events[eventId]];
+  }
+}
+
+- (void)_notifyEventDispatcherObserversOfEvent_DEPRECATED:(NSNotification *)notification
+{
+  NSDictionary *userInfo = notification.userInfo;
+  id<RCTEvent> event = [userInfo objectForKey:@"event"];
+  if (event) {
+    [self notifyObserversOfEvent:event];
   }
 }
 

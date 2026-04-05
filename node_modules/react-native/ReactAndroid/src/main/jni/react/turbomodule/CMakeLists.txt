@@ -6,11 +6,8 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_VERBOSE_MAKEFILE on)
 
-add_compile_options(
-        -fexceptions
-        -frtti
-        -Wno-unused-lambda-capture
-        -std=c++20)
+include(${REACT_ANDROID_DIR}/src/main/jni/first-party/jni-lib-merge/SoMerging-utils.cmake)
+include(${REACT_COMMON_DIR}/cmake-utils/react-native-flags.cmake)
 
 #########################
 ### callinvokerholder ###
@@ -19,7 +16,7 @@ add_compile_options(
 # TODO This should be exported to its own folder hierarchy
 add_library(
         callinvokerholder
-        STATIC
+        OBJECT
         ReactCommon/CallInvokerHolder.cpp
         ReactCommon/NativeMethodCallInvokerHolder.cpp
 )
@@ -30,11 +27,11 @@ target_include_directories(callinvokerholder
         )
 
 target_link_libraries(callinvokerholder
-        fb
         fbjni
         runtimeexecutor
         callinvoker
         reactperfloggerjni)
+target_compile_reactnative_options(callinvokerholder PRIVATE)
 
 ##################################
 ### react_nativemodule_manager ###
@@ -43,11 +40,14 @@ target_link_libraries(callinvokerholder
 # TODO: rename to react_nativemodule_manager
 add_library(
         turbomodulejsijni
-        SHARED
-        ReactCommon/CompositeTurboModuleManagerDelegate.cpp
+        OBJECT
+        ReactCommon/BindingsInstallerHolder.cpp
         ReactCommon/OnLoad.cpp
         ReactCommon/TurboModuleManager.cpp
+        $<TARGET_OBJECTS:logger>
+        $<TARGET_OBJECTS:react_bridging>
 )
+target_merge_so(turbomodulejsijni)
 
 target_include_directories(
         turbomodulejsijni
@@ -56,9 +56,9 @@ target_include_directories(
 )
 
 target_link_libraries(turbomodulejsijni
-        fb
         fbjni
         jsi
         react_nativemodule_core
         callinvokerholder
         reactperfloggerjni)
+target_compile_reactnative_options(turbomodulejsijni PRIVATE)

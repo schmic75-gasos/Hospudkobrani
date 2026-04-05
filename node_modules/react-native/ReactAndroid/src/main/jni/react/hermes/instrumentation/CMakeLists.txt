@@ -8,24 +8,22 @@ set(CMAKE_VERBOSE_MAKEFILE on)
 
 file(GLOB_RECURSE jsijniprofiler_SRC CONFIGURE_DEPENDS *.cpp)
 
+include(${REACT_ANDROID_DIR}/src/main/jni/first-party/jni-lib-merge/SoMerging-utils.cmake)
+include(${REACT_COMMON_DIR}/cmake-utils/react-native-flags.cmake)
+
 add_library(
         jsijniprofiler
-        SHARED
+        OBJECT
         ${jsijniprofiler_SRC}
 )
-target_compile_options(
-        jsijniprofiler
-        PRIVATE
-        -fexceptions
-)
+target_compile_reactnative_options(jsijniprofiler PRIVATE)
+target_merge_so(jsijniprofiler)
+
 target_include_directories(jsijniprofiler PRIVATE .)
+
 target_link_libraries(
       jsijniprofiler
-      fb
-      fbjni
-      jsireact
-      folly_runtime
       hermes-engine::libhermes
       jsi
-      reactnativejni
+      reactnative
 )

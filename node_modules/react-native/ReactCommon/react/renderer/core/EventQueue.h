@@ -28,7 +28,6 @@ class EventQueue {
   EventQueue(
       EventQueueProcessor eventProcessor,
       std::unique_ptr<EventBeat> eventBeat);
-  virtual ~EventQueue() = default;
 
   /*
    * Enqueues and (probably later) dispatch a given event.
@@ -49,13 +48,18 @@ class EventQueue {
    */
   void enqueueStateUpdate(StateUpdate&& stateUpdate) const;
 
+  /*
+   * Experimental API exposed to support EventEmitter::experimental_flushSync.
+   */
+  void experimental_flushSync() const;
+
  protected:
   /*
    * Called on any enqueue operation.
    * Override in subclasses to trigger beat `request` and/or beat `induce`.
    * Default implementation does nothing.
    */
-  virtual void onEnqueue() const = 0;
+  void onEnqueue() const;
   void onBeat(jsi::Runtime& runtime) const;
 
   void flushEvents(jsi::Runtime& runtime) const;
@@ -68,7 +72,6 @@ class EventQueue {
   mutable std::vector<RawEvent> eventQueue_;
   mutable std::vector<StateUpdate> stateUpdateQueue_;
   mutable std::mutex queueMutex_;
-  mutable bool hasContinuousEventStarted_{false};
 };
 
 } // namespace facebook::react

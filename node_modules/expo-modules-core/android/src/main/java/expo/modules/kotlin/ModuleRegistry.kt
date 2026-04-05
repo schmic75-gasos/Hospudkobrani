@@ -4,6 +4,7 @@ import android.view.View
 import expo.modules.kotlin.events.EventName
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.tracing.trace
+import expo.modules.kotlin.views.ViewManagerDefinition
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import java.lang.ref.WeakReference
 
 class ModuleRegistry(
-  private val appContext: WeakReference<AppContext>
+  private val runtimeContext: WeakReference<RuntimeContext>
 ) : Iterable<ModuleHolder<*>> {
   @PublishedApi
   internal val registry = mutableMapOf<String, ModuleHolder<*>>()
@@ -21,7 +22,7 @@ class ModuleRegistry(
   private var isReadyForPostingEvents = false
 
   fun <T : Module> register(module: T) = trace("ModuleRegistry.register(${module.javaClass})") {
-    module._appContext = requireNotNull(appContext.get()) { "Cannot create a module for invalid app context." }
+    module._runtimeContext = requireNotNull(runtimeContext.get()) { "Cannot create a module for invalid runtime context." }
 
     val holder = ModuleHolder(module)
 
@@ -63,12 +64,12 @@ class ModuleRegistry(
 
   fun <T : View> getModuleHolder(viewClass: Class<T>): ModuleHolder<*>? {
     return registry.firstNotNullOfOrNull { (_, holder) ->
-      if (holder.definition.viewManagerDefinition?.viewType == viewClass) {
-        holder
-      } else {
-        null
-      }
+      holder.takeIf { getViewDefinition(holder, viewClass) != null }
     }
+  }
+
+  fun <T : View> getViewDefinition(holder: ModuleHolder<*>, viewClass: Class<T>): ViewManagerDefinition? {
+    return holder.definition.viewManagerDefinitions.values.find { it.viewType == viewClass }
   }
 
   /**

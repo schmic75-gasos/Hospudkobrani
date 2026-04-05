@@ -15,6 +15,9 @@ export interface SchemaType {
   };
 }
 
+/**
+ * Component Type Annotations
+ */
 export interface DoubleTypeAnnotation {
   readonly type: 'DoubleTypeAnnotation';
 }
@@ -35,11 +38,6 @@ export interface StringTypeAnnotation {
   readonly type: 'StringTypeAnnotation';
 }
 
-export interface StringEnumTypeAnnotation {
-  readonly type: 'StringEnumTypeAnnotation';
-  readonly options: readonly string[];
-}
-
 export interface VoidTypeAnnotation {
   readonly type: 'VoidTypeAnnotation';
 }
@@ -47,11 +45,17 @@ export interface VoidTypeAnnotation {
 export interface ObjectTypeAnnotation<T> {
   readonly type: 'ObjectTypeAnnotation';
   readonly properties: readonly NamedShape<T>[];
+  // metadata for objects that generated from interfaces
   readonly baseTypes?: readonly string[] | undefined;
 }
 
 export interface MixedTypeAnnotation {
   readonly type: 'MixedTypeAnnotation';
+}
+
+export interface EventEmitterTypeAnnotation {
+  readonly type: 'EventEmitterTypeAnnotation';
+  readonly typeAnnotation: NativeModuleEventEmitterTypeAnnotation;
 }
 
 export interface FunctionTypeAnnotation<P, R> {
@@ -83,8 +87,13 @@ export interface ComponentShape extends OptionsShape {
 
 export interface OptionsShape {
   readonly interfaceOnly?: boolean | undefined;
+  // Use for components with no current paper rename in progress
+  // Does not check for new name
   readonly paperComponentName?: string | undefined;
+  // Use for components that are not used on other platforms.
   readonly excludedPlatforms?: readonly PlatformType[] | undefined;
+  // Use for components currently being renamed in paper
+  // Will use new name if it is available and fallback to this name
   readonly paperComponentNameDeprecated?: string | undefined;
 }
 
@@ -96,8 +105,8 @@ export interface ExtendsPropsShape {
 export interface EventTypeShape {
   readonly name: string;
   readonly bubblingType:
-    | 'direct'
-    | 'bubble';
+  | 'direct'
+  | 'bubble';
   readonly optional: boolean;
   readonly paperTopLevelNameDeprecated?: string | undefined;
   readonly typeAnnotation: {
@@ -112,86 +121,97 @@ export type EventTypeAnnotation =
   | DoubleTypeAnnotation
   | FloatTypeAnnotation
   | Int32TypeAnnotation
-  | StringEnumTypeAnnotation
+  | MixedTypeAnnotation
+  | StringLiteralUnionTypeAnnotation
   | ObjectTypeAnnotation<EventTypeAnnotation>
+  | ArrayTypeAnnotation<EventTypeAnnotation>
+
+export type ComponentArrayTypeAnnotation = ArrayTypeAnnotation<
+  | BooleanTypeAnnotation
+  | StringTypeAnnotation
+  | DoubleTypeAnnotation
+  | FloatTypeAnnotation
+  | Int32TypeAnnotation
+  | MixedTypeAnnotation
   | {
-    readonly type: 'ArrayTypeAnnotation';
-    readonly elementType: EventTypeAnnotation
-  };
+    readonly type: 'StringEnumTypeAnnotation';
+    readonly default: string;
+    readonly options: readonly string[];
+  }
+  | ObjectTypeAnnotation<PropTypeAnnotation>
+  | ReservedPropTypeAnnotation
+  | ArrayTypeAnnotation<ObjectTypeAnnotation<PropTypeAnnotation>>
+>;
+
+export type ComponentCommandArrayTypeAnnotation = ArrayTypeAnnotation<
+  | BooleanTypeAnnotation
+  | StringTypeAnnotation
+  | DoubleTypeAnnotation
+  | FloatTypeAnnotation
+  | Int32TypeAnnotation
+  // Mixed is not great. This generally means its a type alias to another type
+  // like an object or union. Ideally we'd encode that type in the schema so the compat-check can
+  // validate those deeper objects for breaking changes and the generators can do something smarter.
+  // As of now, the generators just create ReadableMap or (const NSArray *) which are untyped
+  | MixedTypeAnnotation
+>;
+
+export interface ArrayTypeAnnotation<T> {
+  readonly type: 'ArrayTypeAnnotation';
+  readonly elementType: T;
+}
 
 export type PropTypeAnnotation =
   | {
-      readonly type: 'BooleanTypeAnnotation';
-      readonly default:
-        | boolean
-        | null;
-    }
+    readonly type: 'BooleanTypeAnnotation';
+    readonly default: boolean | null;
+  }
   | {
-      readonly type: 'StringTypeAnnotation';
-      readonly default:
-        | string
-        | null;
-    }
+    readonly type: 'StringTypeAnnotation';
+    readonly default: string | null;
+  }
   | {
-      readonly type: 'DoubleTypeAnnotation';
-      readonly default: number;
-    }
+    readonly type: 'DoubleTypeAnnotation';
+    readonly default: number;
+  }
   | {
-      readonly type: 'FloatTypeAnnotation';
-      readonly default:
-        | number
-        | null;
-    }
+    readonly type: 'FloatTypeAnnotation';
+    readonly default: number | null;
+  }
   | {
-      readonly type: 'Int32TypeAnnotation';
-      readonly default: number;
-    }
+    readonly type: 'Int32TypeAnnotation';
+    readonly default: number;
+  }
   | {
-      readonly type: 'StringEnumTypeAnnotation';
-      readonly default: string;
-      readonly options: readonly string[];
-    }
+    readonly type: 'StringEnumTypeAnnotation';
+    readonly default: string;
+    readonly options: readonly string[];
+  }
   | {
-      readonly type: 'Int32EnumTypeAnnotation';
-      readonly default: number;
-      readonly options: readonly number[];
-    }
+    readonly type: 'Int32EnumTypeAnnotation';
+    readonly default: number;
+    readonly options: readonly number[];
+  }
   | ReservedPropTypeAnnotation
   | ObjectTypeAnnotation<PropTypeAnnotation>
-  | {
-      readonly type: 'ArrayTypeAnnotation';
-      readonly elementType:
-        | BooleanTypeAnnotation
-        | StringTypeAnnotation
-        | DoubleTypeAnnotation
-        | FloatTypeAnnotation
-        | Int32TypeAnnotation
-        | {
-            readonly type: 'StringEnumTypeAnnotation';
-            readonly default: string;
-            readonly options: readonly string[];
-          }
-        | ObjectTypeAnnotation<PropTypeAnnotation>
-        | ReservedPropTypeAnnotation
-        | {
-            readonly type: 'ArrayTypeAnnotation';
-            readonly elementType: ObjectTypeAnnotation<PropTypeAnnotation>;
-          };
-    }
+  | ComponentArrayTypeAnnotation
   | MixedTypeAnnotation;
 
 export interface ReservedPropTypeAnnotation {
   readonly type: 'ReservedPropTypeAnnotation';
   readonly name:
-    | 'ColorPrimitive'
-    | 'ImageSourcePrimitive'
-    | 'PointPrimitive'
-    | 'EdgeInsetsPrimitive'
-    | 'ImageRequestPrimitive'
-    | 'DimensionPrimitive';
+  | 'ColorPrimitive'
+  | 'ImageSourcePrimitive'
+  | 'PointPrimitive'
+  | 'EdgeInsetsPrimitive'
+  | 'ImageRequestPrimitive'
+  | 'DimensionPrimitive';
 }
 
-export type CommandTypeAnnotation = FunctionTypeAnnotation<CommandParamTypeAnnotation, VoidTypeAnnotation>;
+export type CommandTypeAnnotation = FunctionTypeAnnotation<
+  CommandParamTypeAnnotation,
+  VoidTypeAnnotation
+>;
 
 export type CommandParamTypeAnnotation =
   | ReservedTypeAnnotation
@@ -200,21 +220,16 @@ export type CommandParamTypeAnnotation =
   | DoubleTypeAnnotation
   | FloatTypeAnnotation
   | StringTypeAnnotation
-  | {
-    readonly type: 'ArrayTypeAnnotation';
-    readonly elementType:
-    | Int32TypeAnnotation
-    | DoubleTypeAnnotation
-    | FloatTypeAnnotation
-    | BooleanTypeAnnotation
-    | StringTypeAnnotation
-  };
+  | ComponentCommandArrayTypeAnnotation;
 
 export interface ReservedTypeAnnotation {
   readonly type: 'ReservedTypeAnnotation';
-  readonly name: 'RootTag';
+  readonly name: 'RootTag'; // Union with more custom types.
 }
 
+/**
+ * NativeModule Types
+ */
 export type Nullable<T extends NativeModuleTypeAnnotation> =
   | NullableTypeAnnotation<T>
   | T;
@@ -230,14 +245,22 @@ export interface NativeModuleSchema {
   readonly enumMap: NativeModuleEnumMap;
   readonly spec: NativeModuleSpec;
   readonly moduleName: string;
+  // Use for modules that are not used on other platforms.
+  // TODO: It's clearer to define `restrictedToPlatforms` instead, but
+  // `excludedPlatforms` is used here to be consistent with ComponentSchema.
   readonly excludedPlatforms?: readonly PlatformType[] | undefined;
 }
 
 export interface NativeModuleSpec {
-  readonly properties: readonly NativeModulePropertyShape[];
+  readonly eventEmitters: readonly NativeModuleEventEmitterShape[];
+  readonly methods: readonly NativeModulePropertyShape[];
 }
 
-export type NativeModulePropertyShape = NamedShape<Nullable<NativeModuleFunctionTypeAnnotation>>;
+export type NativeModulePropertyShape = NamedShape<
+  Nullable<NativeModuleFunctionTypeAnnotation>
+>;
+
+export type NativeModuleEventEmitterShape = NamedShape<EventEmitterTypeAnnotation>;
 
 export interface NativeModuleEnumMap {
   readonly [enumName: string]: NativeModuleEnumDeclarationWithMembers;
@@ -247,17 +270,43 @@ export interface NativeModuleAliasMap {
   readonly [aliasName: string]: NativeModuleObjectTypeAnnotation;
 }
 
-export type NativeModuleFunctionTypeAnnotation = FunctionTypeAnnotation<Nullable<NativeModuleParamTypeAnnotation>, Nullable<NativeModuleReturnTypeAnnotation>>;
+export type NativeModuleFunctionTypeAnnotation = FunctionTypeAnnotation<
+  Nullable<NativeModuleParamTypeAnnotation>,
+  Nullable<NativeModuleReturnTypeAnnotation>
+>;
 
-export type NativeModuleObjectTypeAnnotation = ObjectTypeAnnotation<Nullable<NativeModuleBaseTypeAnnotation>>;
+export type NativeModuleObjectTypeAnnotation = ObjectTypeAnnotation<
+  Nullable<NativeModuleBaseTypeAnnotation>
+>;
 
-export interface NativeModuleArrayTypeAnnotation<T extends Nullable<NativeModuleBaseTypeAnnotation>> {
-  readonly type: 'ArrayTypeAnnotation';
-  readonly elementType?: T | undefined;
+/**
+ * TODO(T72031674): Migrate all our NativeModule specs to not use
+ * invalid Array ElementTypes. Then, make the elementType required.
+ */
+interface NativeModuleArrayTypeAnnotation<T> extends ArrayTypeAnnotation<T | UnsafeAnyTypeAnnotation> { }
+
+
+export interface UnsafeAnyTypeAnnotation {
+  readonly type: 'AnyTypeAnnotation',
+}
+
+export interface NativeModuleNumberLiteralTypeAnnotation {
+  readonly type: 'NumberLiteralTypeAnnotation';
+  readonly value: number;
 }
 
 export interface NativeModuleStringTypeAnnotation {
   readonly type: 'StringTypeAnnotation';
+}
+
+export interface NativeModuleStringLiteralTypeAnnotation {
+  readonly type: 'StringLiteralTypeAnnotation';
+  readonly value: string;
+}
+
+export interface StringLiteralUnionTypeAnnotation {
+  readonly type: 'StringLiteralUnionTypeAnnotation';
+  readonly types: NativeModuleStringLiteralTypeAnnotation[];
 }
 
 export interface NativeModuleNumberTypeAnnotation {
@@ -280,10 +329,10 @@ export interface NativeModuleBooleanTypeAnnotation {
   readonly type: 'BooleanTypeAnnotation';
 }
 
-export type NativeModuleEnumMembers = readonly {
+export type NativeModuleEnumMember = {
   readonly name: string;
-  readonly value: string | number;
-}[];
+  readonly value: NativeModuleStringLiteralTypeAnnotation | NativeModuleNumberLiteralTypeAnnotation,
+};
 
 export type NativeModuleEnumMemberType =
   | 'NumberTypeAnnotation'
@@ -299,11 +348,14 @@ export interface NativeModuleEnumDeclarationWithMembers {
   name: string;
   type: 'EnumDeclarationWithMembers';
   memberType: NativeModuleEnumMemberType;
-  members: NativeModuleEnumMembers;
+  members: readonly NativeModuleEnumMember[];
 }
 
 export interface NativeModuleGenericObjectTypeAnnotation {
   readonly type: 'GenericObjectTypeAnnotation';
+  // a dictionary type is codegen as "Object"
+  // but we know all its members are in the same type
+  // when it happens, the following field is non-null
   readonly dictionaryValueType?: Nullable<NativeModuleTypeAnnotation> | undefined;
 }
 
@@ -314,7 +366,7 @@ export interface NativeModuleTypeAliasTypeAnnotation {
 
 export interface NativeModulePromiseTypeAnnotation {
   readonly type: 'PromiseTypeAnnotation';
-  readonly elementType?: Nullable<NativeModuleBaseTypeAnnotation> | undefined;
+  readonly elementType: Nullable<NativeModuleBaseTypeAnnotation> | VoidTypeAnnotation;
 }
 
 export type UnionTypeAnnotationMemberType =
@@ -331,9 +383,30 @@ export interface NativeModuleMixedTypeAnnotation {
   readonly type: 'MixedTypeAnnotation';
 }
 
-export type NativeModuleBaseTypeAnnotation =
-  | NativeModuleStringTypeAnnotation
+export type NativeModuleEventEmitterBaseTypeAnnotation =
+  | NativeModuleBooleanTypeAnnotation
+  | NativeModuleDoubleTypeAnnotation
+  | NativeModuleFloatTypeAnnotation
+  | NativeModuleInt32TypeAnnotation
   | NativeModuleNumberTypeAnnotation
+  | NativeModuleNumberLiteralTypeAnnotation
+  | NativeModuleStringTypeAnnotation
+  | NativeModuleStringLiteralTypeAnnotation
+  | StringLiteralUnionTypeAnnotation
+  | NativeModuleTypeAliasTypeAnnotation
+  | NativeModuleGenericObjectTypeAnnotation
+  | VoidTypeAnnotation;
+
+export type NativeModuleEventEmitterTypeAnnotation =
+  | NativeModuleEventEmitterBaseTypeAnnotation
+  | ArrayTypeAnnotation<NativeModuleEventEmitterBaseTypeAnnotation>;
+
+export type NativeModuleBaseTypeAnnotation =
+  NativeModuleStringTypeAnnotation
+  | NativeModuleStringLiteralTypeAnnotation
+  | StringLiteralUnionTypeAnnotation
+  | NativeModuleNumberTypeAnnotation
+  | NativeModuleNumberLiteralTypeAnnotation
   | NativeModuleInt32TypeAnnotation
   | NativeModuleDoubleTypeAnnotation
   | NativeModuleFloatTypeAnnotation
@@ -342,10 +415,10 @@ export type NativeModuleBaseTypeAnnotation =
   | NativeModuleGenericObjectTypeAnnotation
   | ReservedTypeAnnotation
   | NativeModuleTypeAliasTypeAnnotation
-  | NativeModuleArrayTypeAnnotation<Nullable<NativeModuleBaseTypeAnnotation>>
   | NativeModuleObjectTypeAnnotation
   | NativeModuleUnionTypeAnnotation
-  | NativeModuleMixedTypeAnnotation;
+  | NativeModuleMixedTypeAnnotation
+  | NativeModuleArrayTypeAnnotation<NativeModuleBaseTypeAnnotation>;
 
 export type NativeModuleParamTypeAnnotation =
   | NativeModuleBaseTypeAnnotation
@@ -358,11 +431,12 @@ export type NativeModuleReturnTypeAnnotation =
 export type NativeModuleTypeAnnotation =
   | NativeModuleBaseTypeAnnotation
   | NativeModuleParamOnlyTypeAnnotation
-  | NativeModuleReturnOnlyTypeAnnotation;
+  | NativeModuleReturnOnlyTypeAnnotation
+  | NativeModuleEventEmitterTypeAnnotation;
 
-export type NativeModuleParamOnlyTypeAnnotation = NativeModuleFunctionTypeAnnotation;
+type NativeModuleParamOnlyTypeAnnotation = NativeModuleFunctionTypeAnnotation;
 
-export type NativeModuleReturnOnlyTypeAnnotation =
+type NativeModuleReturnOnlyTypeAnnotation =
   | NativeModuleFunctionTypeAnnotation
   | NativeModulePromiseTypeAnnotation
   | VoidTypeAnnotation;

@@ -22,6 +22,7 @@
 
 /** Native iOS text field bottom keyboard offset amount */
 static const CGFloat kSingleLineKeyboardBottomOffset = 15.0;
+static NSSet<NSNumber *> *returnKeyTypesSet;
 
 @implementation RCTBaseTextInputView {
   __weak RCTBridge *_bridge;
@@ -29,12 +30,15 @@ static const CGFloat kSingleLineKeyboardBottomOffset = 15.0;
   BOOL _hasInputAccessoryView;
   NSString *_Nullable _predictedText;
   BOOL _didMoveToWindow;
+  NSArray<UIBarButtonItemGroup *> *_initialValueLeadingBarButtonGroups;
+  NSArray<UIBarButtonItemGroup *> *_initialValueTrailingBarButtonGroups;
 }
 
 - (void)reactUpdateResponderOffsetForScrollView:(RCTScrollView *)scrollView
 {
   if (![self isDescendantOfView:scrollView]) {
     // View is outside scroll view
+    scrollView.firstResponderViewOutsideScrollView = self.backedTextInputView;
     return;
   }
 
@@ -62,6 +66,9 @@ static const CGFloat kSingleLineKeyboardBottomOffset = 15.0;
   if (self = [super initWithFrame:CGRectZero]) {
     _bridge = bridge;
     _eventDispatcher = bridge.eventDispatcher;
+    [self initializeReturnKeyType];
+    _initialValueLeadingBarButtonGroups = nil;
+    _initialValueTrailingBarButtonGroups = nil;
   }
 
   return self;
@@ -295,6 +302,14 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
       @"oneTimeCode" : UITextContentTypeOneTimeCode,
     }];
 
+    if (@available(iOS 15.0, *)) {
+      [mutableContentTypeMap addEntriesFromDictionary:@{
+        @"dateTime" : UITextContentTypeDateTime,
+        @"flightNumber" : UITextContentTypeFlightNumber,
+        @"shipmentTrackingNumber" : UITextContentTypeShipmentTrackingNumber,
+      }];
+    }
+
 #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 170000 /* __IPHONE_17_0 */
     if (@available(iOS 17.0, *)) {
       [mutableContentTypeMap addEntriesFromDictionary:@{
@@ -313,6 +328,15 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
         @"birthdateYear" : UITextContentTypeBirthdateYear,
       }];
     }
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 170400 /* __IPHONE_17_4 */
+    if (@available(iOS 17.4, *)) {
+      [mutableContentTypeMap addEntriesFromDictionary:@{
+        @"cellularEID" : UITextContentTypeCellularEID,
+        @"cellularIMEI" : UITextContentTypeCellularIMEI,
+      }];
+    }
+#endif
 #endif
 
     contentTypeMap = mutableContentTypeMap;
@@ -364,6 +388,37 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
   }
 }
 
+- (NSString *)inputAccessoryViewButtonLabel
+{
+  return self.backedTextInputView.inputAccessoryViewButtonLabel;
+}
+
+- (void)setInputAccessoryViewButtonLabel:(NSString *)inputAccessoryViewButtonLabel
+{
+  self.backedTextInputView.inputAccessoryViewButtonLabel = inputAccessoryViewButtonLabel;
+}
+
+- (void)setDisableKeyboardShortcuts:(BOOL)disableKeyboardShortcuts
+{
+#if TARGET_OS_IOS
+  // Initialize the initial values only once
+  if (_initialValueLeadingBarButtonGroups == nil) {
+    // Capture initial values of leading and trailing button groups
+    _initialValueLeadingBarButtonGroups = self.backedTextInputView.inputAssistantItem.leadingBarButtonGroups;
+    _initialValueTrailingBarButtonGroups = self.backedTextInputView.inputAssistantItem.trailingBarButtonGroups;
+  }
+
+  if (disableKeyboardShortcuts) {
+    self.backedTextInputView.inputAssistantItem.leadingBarButtonGroups = @[];
+    self.backedTextInputView.inputAssistantItem.trailingBarButtonGroups = @[];
+  } else {
+    // Restore the initial values
+    self.backedTextInputView.inputAssistantItem.leadingBarButtonGroups = _initialValueLeadingBarButtonGroups;
+    self.backedTextInputView.inputAssistantItem.trailingBarButtonGroups = _initialValueTrailingBarButtonGroups;
+  }
+#endif
+}
+
 #pragma mark - RCTBackedTextInputDelegate
 
 - (BOOL)textInputShouldBeginEditing
@@ -373,14 +428,6 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
 
 - (void)textInputDidBeginEditing
 {
-  if (_clearTextOnFocus) {
-    self.backedTextInputView.attributedText = [NSAttributedString new];
-  }
-
-  if (_selectTextOnFocus) {
-    [self.backedTextInputView selectAll:nil];
-  }
-
   [_eventDispatcher sendTextEventWithType:RCTTextEventTypeFocus
                                  reactTag:self.reactTag
                                      text:[self.backedTextInputView.attributedText.string copy]
@@ -464,6 +511,9 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
             // the character at the length limit takes more than 16bits, truncation should end at the character before
             allowedLength = cutOffCharacterRange.location;
           }
+        }
+        if (allowedLength <= 0) {
+          return nil;
         }
         // Truncate the input string so the result is exactly maxLength
         NSString *limitedString = [text substringToIndex:allowedLength];
@@ -598,6 +648,14 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
 - (void)reactFocus
 {
   [self.backedTextInputView reactFocus];
+
+  if (_clearTextOnFocus) {
+    self.backedTextInputView.attributedText = [NSAttributedString new];
+  }
+
+  if (_selectTextOnFocus) {
+    [self.backedTextInputView selectAll:nil];
+  }
 }
 
 - (void)reactBlur
@@ -609,6 +667,7 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
 {
   if (self.autoFocus && !_didMoveToWindow) {
     [self.backedTextInputView reactFocus];
+    [self initializeReturnKeyType];
   } else {
     [self.backedTextInputView reactFocusIfNeeded];
   }
@@ -645,17 +704,66 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
                           }];
 }
 
+- (NSString *)returnKeyTypeToString:(UIReturnKeyType)returnKeyType
+{
+  switch (returnKeyType) {
+    case UIReturnKeyGo:
+      return @"Go";
+    case UIReturnKeyNext:
+      return @"Next";
+    case UIReturnKeySearch:
+      return @"Search";
+    case UIReturnKeySend:
+      return @"Send";
+    case UIReturnKeyYahoo:
+      return @"Yahoo";
+    case UIReturnKeyGoogle:
+      return @"Google";
+    case UIReturnKeyRoute:
+      return @"Route";
+    case UIReturnKeyJoin:
+      return @"Join";
+    case UIReturnKeyEmergencyCall:
+      return @"Emergency Call";
+    default:
+      return @"Done";
+  }
+}
+
+- (void)initializeReturnKeyType
+{
+  returnKeyTypesSet = [NSSet setWithObjects:@(UIReturnKeyDone),
+                                            @(UIReturnKeyGo),
+                                            @(UIReturnKeyNext),
+                                            @(UIReturnKeySearch),
+                                            @(UIReturnKeySend),
+                                            @(UIReturnKeyYahoo),
+                                            @(UIReturnKeyGoogle),
+                                            @(UIReturnKeyRoute),
+                                            @(UIReturnKeyJoin),
+                                            @(UIReturnKeyRoute),
+                                            @(UIReturnKeyEmergencyCall),
+                                            nil];
+}
+
 - (void)setDefaultInputAccessoryView
 {
   UIView<RCTBackedTextInputViewProtocol> *textInputView = self.backedTextInputView;
   UIKeyboardType keyboardType = textInputView.keyboardType;
+  NSString *inputAccessoryViewButtonLabel = textInputView.inputAccessoryViewButtonLabel;
 
-  // These keyboard types (all are number pads) don't have a "Done" button by default,
+  // These keyboard types (all are number pads) don't have a Return Key button by default,
   // so we create an `inputAccessoryView` with this button for them.
+
+  UIReturnKeyType returnKeyType = textInputView.returnKeyType;
+
+  BOOL containsKeyType = [returnKeyTypesSet containsObject:@(returnKeyType)];
+  BOOL containsInputAccessoryViewButtonLabel = inputAccessoryViewButtonLabel != nil;
+
   BOOL shouldHaveInputAccessoryView =
       (keyboardType == UIKeyboardTypeNumberPad || keyboardType == UIKeyboardTypePhonePad ||
        keyboardType == UIKeyboardTypeDecimalPad || keyboardType == UIKeyboardTypeASCIICapableNumberPad) &&
-      textInputView.returnKeyType == UIReturnKeyDone;
+      (containsKeyType || containsInputAccessoryViewButtonLabel);
 
   if (_hasInputAccessoryView == shouldHaveInputAccessoryView) {
     return;
@@ -664,14 +772,17 @@ RCT_NOT_IMPLEMENTED(-(instancetype)initWithFrame : (CGRect)frame)
   _hasInputAccessoryView = shouldHaveInputAccessoryView;
 
   if (shouldHaveInputAccessoryView) {
+    NSString *buttonLabel = inputAccessoryViewButtonLabel != nil ? inputAccessoryViewButtonLabel
+                                                                 : [self returnKeyTypeToString:returnKeyType];
+
     UIToolbar *toolbarView = [UIToolbar new];
     [toolbarView sizeToFit];
     UIBarButtonItem *flexibleSpace =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-    UIBarButtonItem *doneButton =
-        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
-                                                      target:self
-                                                      action:@selector(handleInputAccessoryDoneButton)];
+    UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithTitle:buttonLabel
+                                                                   style:UIBarButtonItemStylePlain
+                                                                  target:self
+                                                                  action:@selector(handleInputAccessoryDoneButton)];
     toolbarView.items = @[ flexibleSpace, doneButton ];
     textInputView.inputAccessoryView = toolbarView;
   } else {

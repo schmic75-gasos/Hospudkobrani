@@ -6,37 +6,32 @@
 
 #include <ReactCommon/CallInvoker.h>
 
+#include <jsi/jsi.h>
+
+namespace jsi = facebook::jsi;
+namespace react = facebook::react;
+
 namespace expo {
 
 /**
  * Dummy CallInvoker that invokes everything immediately.
  * Used in the test environment to check the async flow.
  */
-class TestingSyncJSCallInvoker : public facebook::react::CallInvoker {
+class TestingSyncJSCallInvoker : public react::CallInvoker {
 public:
-  TestingSyncJSCallInvoker(std::shared_ptr<jsi::Runtime> runtime) : runtime(runtime) {}
+  explicit TestingSyncJSCallInvoker(const std::shared_ptr<jsi::Runtime>& runtime) : runtime(runtime) {}
 
-#if REACT_NATIVE_TARGET_VERSION >= 75
   void invokeAsync(react::CallFunc &&func) noexcept override {
-    func(*runtime);
+    func(*runtime.lock());
   }
 
   void invokeSync(react::CallFunc &&func) override {
-    func(*runtime);
+    func(*runtime.lock());
   }
-#else
-  void invokeAsync(std::function<void()> &&func) noexcept override {
-    func();
-  }
-
-  void invokeSync(std::function<void()> &&func) override {
-    func();
-  }
-#endif
 
   ~TestingSyncJSCallInvoker() override = default;
 
-  std::shared_ptr<jsi::Runtime> runtime;
+  std::weak_ptr<jsi::Runtime> runtime;
 };
 
 } // namespace expo

@@ -10,26 +10,25 @@
 
 import type {LogLevel} from '../Data/LogBoxLog';
 
-import SafeAreaView from '../../Components/SafeAreaView/SafeAreaView';
 import View from '../../Components/View/View';
 import StyleSheet from '../../StyleSheet/StyleSheet';
 import Text from '../../Text/Text';
-import LogBoxButton from './LogBoxButton';
+import LogBoxInspectorFooterButton from './LogBoxInspectorFooterButton';
 import * as LogBoxStyle from './LogBoxStyle';
 import * as React from 'react';
 
-type Props = $ReadOnly<{|
+type Props = $ReadOnly<{
   onDismiss: () => void,
   onMinimize: () => void,
   level?: ?LogLevel,
-|}>;
+}>;
 
-function LogBoxInspectorFooter(props: Props): React.Node {
+export default function LogBoxInspectorFooter(props: Props): React.Node {
   if (props.level === 'syntax') {
     return (
       <View style={styles.root}>
         <View style={styles.button}>
-          <Text style={styles.syntaxErrorText}>
+          <Text id="logbox_dismissable_text" style={styles.syntaxErrorText}>
             This error cannot be dismissed.
           </Text>
         </View>
@@ -39,31 +38,17 @@ function LogBoxInspectorFooter(props: Props): React.Node {
 
   return (
     <View style={styles.root}>
-      <FooterButton text="Dismiss" onPress={props.onDismiss} />
-      <FooterButton text="Minimize" onPress={props.onMinimize} />
+      <LogBoxInspectorFooterButton
+        id="logbox_footer_button_dismiss"
+        text="Dismiss"
+        onPress={props.onDismiss}
+      />
+      <LogBoxInspectorFooterButton
+        id="logbox_footer_button_minimize"
+        text="Minimize"
+        onPress={props.onMinimize}
+      />
     </View>
-  );
-}
-
-type ButtonProps = $ReadOnly<{|
-  onPress: () => void,
-  text: string,
-|}>;
-
-function FooterButton(props: ButtonProps): React.Node {
-  return (
-    <SafeAreaView style={styles.button}>
-      <LogBoxButton
-        backgroundColor={{
-          default: 'transparent',
-          pressed: LogBoxStyle.getBackgroundDarkColor(),
-        }}
-        onPress={props.onPress}>
-        <View style={styles.buttonContent}>
-          <Text style={styles.buttonLabel}>{props.text}</Text>
-        </View>
-      </LogBoxButton>
-    </SafeAreaView>
   );
 }
 
@@ -79,17 +64,6 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
   },
-  buttonContent: {
-    alignItems: 'center',
-    height: 48,
-    justifyContent: 'center',
-  },
-  buttonLabel: {
-    color: LogBoxStyle.getTextColor(1),
-    fontSize: 14,
-    includeFontPadding: false,
-    lineHeight: 20,
-  },
   syntaxErrorText: {
     textAlign: 'center',
     width: '100%',
@@ -102,5 +76,3 @@ const styles = StyleSheet.create({
     color: LogBoxStyle.getTextColor(0.6),
   },
 });
-
-export default LogBoxInspectorFooter;

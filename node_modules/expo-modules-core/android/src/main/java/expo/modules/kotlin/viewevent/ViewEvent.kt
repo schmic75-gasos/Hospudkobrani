@@ -26,11 +26,11 @@ open class ViewEvent<T>(
     val appContext = nativeModulesProxy.kotlinInteropModuleRegistry.appContext
 
     if (!isValidated) {
-      val holder = appContext.registry.getModuleHolder(view::class.java).ifNull {
+      val holder = appContext.hostingRuntimeContext.registry.getModuleHolder(view::class.java).ifNull {
         logger.warn("⚠️ Cannot get module holder for ${view::class.java}")
         return
       }
-      val callbacks = holder.definition.viewManagerDefinition?.callbacksDefinition.ifNull {
+      val callbacks = appContext.hostingRuntimeContext.registry.getViewDefinition(holder, view::class.java)?.callbacksDefinition.ifNull {
         logger.warn("⚠️ Cannot get callbacks for ${holder.module::class.java}")
         return
       }
@@ -46,7 +46,7 @@ open class ViewEvent<T>(
     appContext
       .callbackInvoker
       ?.emit(
-        viewId = view.id,
+        view = view,
         eventName = name,
         eventBody = convertEventBody(arg),
         coalescingKey = coalescingKey?.invoke(arg)

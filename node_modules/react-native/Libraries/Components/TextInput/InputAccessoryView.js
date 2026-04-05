@@ -8,11 +8,13 @@
  * @format
  */
 
+import SafeAreaView from '../../Components/SafeAreaView/SafeAreaView';
 import StyleSheet, {
   type ColorValue,
   type ViewStyleProp,
 } from '../../StyleSheet/StyleSheet';
 import Platform from '../../Utilities/Platform';
+import useWindowDimensions from '../../Utilities/useWindowDimensions';
 import RCTInputAccessoryViewNativeComponent from './RCTInputAccessoryViewNativeComponent';
 import * as React from 'react';
 
@@ -74,7 +76,7 @@ import * as React from 'react';
  * For an example, look at InputAccessoryViewExample.js in RNTester.
  */
 
-type Props = $ReadOnly<{|
+export type InputAccessoryViewProps = $ReadOnly<{
   +children: React.Node,
   /**
    * An ID which is used to associate this `InputAccessoryView` to
@@ -83,9 +85,13 @@ type Props = $ReadOnly<{|
   nativeID?: ?string,
   style?: ?ViewStyleProp,
   backgroundColor?: ?ColorValue,
-|}>;
+}>;
 
-const InputAccessoryView: React.AbstractComponent<Props> = (props: Props) => {
+const InputAccessoryView: React.ComponentType<InputAccessoryViewProps> = (
+  props: InputAccessoryViewProps,
+) => {
+  const {width} = useWindowDimensions();
+
   if (Platform.OS === 'ios') {
     if (React.Children.count(props.children) === 0) {
       return null;
@@ -96,7 +102,9 @@ const InputAccessoryView: React.AbstractComponent<Props> = (props: Props) => {
         style={[props.style, styles.container]}
         nativeID={props.nativeID}
         backgroundColor={props.backgroundColor}>
-        {props.children}
+        <SafeAreaView style={[styles.safeAreaView, {width}]}>
+          {props.children}
+        </SafeAreaView>
       </RCTInputAccessoryViewNativeComponent>
     );
   } else {
@@ -108,6 +116,9 @@ const InputAccessoryView: React.AbstractComponent<Props> = (props: Props) => {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
+  },
+  safeAreaView: {
+    flex: 1,
   },
 });
 

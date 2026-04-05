@@ -1,6 +1,6 @@
 // Copyright 2018-present 650 Industries. All rights reserved.
 
-#import <React/RCTBridgeModule.h>
+@protocol RCTBridgeModule;
 
 #import <ExpoModulesCore/EXModuleRegistry.h>
 

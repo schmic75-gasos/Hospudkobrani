@@ -10,6 +10,10 @@
 #include <react/renderer/components/view/ViewProps.h>
 #include <react/renderer/graphics/Transform.h>
 
+#ifdef ANDROID
+#include <folly/dynamic.h>
+#endif
+
 namespace facebook::react {
 
 /**
@@ -21,7 +25,8 @@ static inline void interpolateViewProps(
     Float animationProgress,
     const Props::Shared& oldPropsShared,
     const Props::Shared& newPropsShared,
-    Props::Shared& interpolatedPropsShared) {
+    Props::Shared& interpolatedPropsShared,
+    const Size& size) {
   const ViewProps* oldViewProps =
       static_cast<const ViewProps*>(oldPropsShared.get());
   const ViewProps* newViewProps =
@@ -31,9 +36,11 @@ static inline void interpolateViewProps(
 
   interpolatedProps->opacity = oldViewProps->opacity +
       (newViewProps->opacity - oldViewProps->opacity) * animationProgress;
-
   interpolatedProps->transform = Transform::Interpolate(
-      animationProgress, oldViewProps->transform, newViewProps->transform);
+      animationProgress,
+      oldViewProps->transform,
+      newViewProps->transform,
+      size);
 
   // Android uses RawProps, not props, to update props on the platform...
   // Since interpolated props don't interpolate at all using RawProps, we need

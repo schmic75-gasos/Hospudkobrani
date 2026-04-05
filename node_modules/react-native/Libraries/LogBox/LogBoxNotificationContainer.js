@@ -8,6 +8,7 @@
  * @format
  */
 
+import SafeAreaView from '../../src/private/components/safeareaview/SafeAreaView_INTERNAL_DO_NOT_USE';
 import View from '../Components/View/View';
 import StyleSheet from '../StyleSheet/StyleSheet';
 import * as LogBoxData from './Data/LogBoxData';
@@ -15,11 +16,11 @@ import LogBoxLog from './Data/LogBoxLog';
 import LogBoxLogNotification from './UI/LogBoxNotification';
 import * as React from 'react';
 
-type Props = $ReadOnly<{|
+type Props = $ReadOnly<{
   logs: $ReadOnlyArray<LogBoxLog>,
   selectedLogIndex: number,
   isDisabled?: ?boolean,
-|}>;
+}>;
 
 export function _LogBoxNotificationContainer(props: Props): React.Node {
   const {logs} = props;
@@ -36,6 +37,10 @@ export function _LogBoxNotificationContainer(props: Props): React.Node {
   };
 
   function openLog(log: LogBoxLog) {
+    if (log.onNotificationPress) {
+      log.onNotificationPress();
+      return;
+    }
     let index = logs.length - 1;
 
     // Stop at zero because if we don't find any log, we'll open the first log.
@@ -54,7 +59,7 @@ export function _LogBoxNotificationContainer(props: Props): React.Node {
     log => log.level === 'error' || log.level === 'fatal',
   );
   return (
-    <View style={styles.list}>
+    <SafeAreaView style={styles.list}>
       {warnings.length > 0 && (
         <View style={styles.toast}>
           <LogBoxLogNotification
@@ -77,7 +82,7 @@ export function _LogBoxNotificationContainer(props: Props): React.Node {
           />
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -97,4 +102,4 @@ const styles = StyleSheet.create({
 
 export default (LogBoxData.withSubscription(
   _LogBoxNotificationContainer,
-): React.AbstractComponent<{||}>);
+): React.ComponentType<{}>);

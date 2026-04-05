@@ -8,123 +8,249 @@
  * @format
  */
 
-'use strict';
-
 import type {PlatformConfig} from '../AnimatedPlatformConfig';
+import type {AnimatedNodeConfig} from './AnimatedNode';
 
+import {validateStyles} from '../../../src/private/animated/NativeAnimatedValidation';
 import * as ReactNativeFeatureFlags from '../../../src/private/featureflags/ReactNativeFeatureFlags';
-import flattenStyle from '../../StyleSheet/flattenStyle';
 import Platform from '../../Utilities/Platform';
-import NativeAnimatedHelper from '../NativeAnimatedHelper';
 import AnimatedNode from './AnimatedNode';
-import AnimatedObject, {hasAnimatedNode} from './AnimatedObject';
+import AnimatedObject from './AnimatedObject';
 import AnimatedTransform from './AnimatedTransform';
 import AnimatedWithChildren from './AnimatedWithChildren';
 
+export type AnimatedStyleAllowlist = $ReadOnly<{[string]: true}>;
+
+type FlatStyle = {[string]: mixed};
+type FlatStyleForWeb<TStyle: FlatStyle> = [mixed, TStyle];
+
 function createAnimatedStyle(
-  inputStyle: any,
+  flatStyle: FlatStyle,
+  allowlist: ?AnimatedStyleAllowlist,
   keepUnanimatedValues: boolean,
-): Object {
-  // $FlowFixMe[underconstrained-implicit-instantiation]
-  const style = flattenStyle(inputStyle);
-  const animatedStyles: any = {};
-  for (const key in style) {
-    const value = style[key];
-    if (value != null && key === 'transform') {
-      animatedStyles[key] =
-        ReactNativeFeatureFlags.shouldUseAnimatedObjectForTransform()
-          ? new AnimatedObject(value)
-          : new AnimatedTransform(value);
-    } else if (value instanceof AnimatedNode) {
-      animatedStyles[key] = value;
-    } else if (hasAnimatedNode(value)) {
-      animatedStyles[key] = new AnimatedObject(value);
-    } else if (keepUnanimatedValues) {
-      animatedStyles[key] = value;
+): [$ReadOnlyArray<string>, $ReadOnlyArray<AnimatedNode>, {[string]: mixed}] {
+  const nodeKeys: Array<string> = [];
+  const nodes: Array<AnimatedNode> = [];
+  const style: {[string]: mixed} = {};
+
+  const keys = Object.keys(flatStyle);
+  for (let ii = 0, length = keys.length; ii < length; ii++) {
+    const key = keys[ii];
+    const value = flatStyle[key];
+
+    if (allowlist == null || hasOwn(allowlist, key)) {
+      let node;
+      if (value != null && key === 'transform') {
+        node = ReactNativeFeatureFlags.shouldUseAnimatedObjectForTransform()
+          ? AnimatedObject.from(value)
+          : // $FlowFixMe[incompatible-call] - `value` is mixed.
+            AnimatedTransform.from(value);
+      } else if (value instanceof AnimatedNode) {
+        node = value;
+      } else {
+        node = AnimatedObject.from(value);
+      }
+      if (node == null) {
+        if (keepUnanimatedValues) {
+          style[key] = value;
+        }
+      } else {
+        nodeKeys.push(key);
+        nodes.push(node);
+        style[key] = node;
+      }
+    } else {
+      if (__DEV__) {
+        // WARNING: This is a potentially expensive check that we should only
+        // do in development. Without this check in development, it might be
+        // difficult to identify which styles need to be allowlisted.
+        if (AnimatedObject.from(flatStyle[key]) != null) {
+          console.error(
+            `AnimatedStyle: ${key} is not allowlisted for animation, but ` +
+              'it contains AnimatedNode values; styles allowing animation: ',
+            allowlist,
+          );
+        }
+      }
+      if (keepUnanimatedValues) {
+        style[key] = value;
+      }
     }
   }
-  return animatedStyles;
+
+  return [nodeKeys, nodes, style];
 }
 
 export default class AnimatedStyle extends AnimatedWithChildren {
-  _inputStyle: any;
-  _style: Object;
+  #originalStyleForWeb: ?mixed;
+  #nodeKeys: $ReadOnlyArray<string>;
+  #nodes: $ReadOnlyArray<AnimatedNode>;
+  #style: {[string]: mixed};
 
-  constructor(style: any) {
-    super();
-    this._inputStyle = style;
-    this._style = createAnimatedStyle(style, Platform.OS !== 'web');
+  /**
+   * Creates an `AnimatedStyle` if `value` contains `AnimatedNode` instances.
+   * Otherwise, returns `null`.
+   */
+  static from(
+    flatStyle: ?FlatStyle,
+    allowlist: ?AnimatedStyleAllowlist,
+    originalStyleForWeb: ?mixed,
+  ): ?AnimatedStyle {
+    if (flatStyle == null) {
+      return null;
+    }
+    const [nodeKeys, nodes, style] = createAnimatedStyle(
+      flatStyle,
+      allowlist,
+      Platform.OS !== 'web',
+    );
+    if (nodes.length === 0) {
+      return null;
+    }
+    return new AnimatedStyle(nodeKeys, nodes, style, originalStyleForWeb);
   }
 
-  __getValue(): Object | Array<Object> {
-    const result: {[string]: any} = {};
-    for (const key in this._style) {
-      const value = this._style[key];
+  constructor(
+    nodeKeys: $ReadOnlyArray<string>,
+    nodes: $ReadOnlyArray<AnimatedNode>,
+    style: {[string]: mixed},
+    originalStyleForWeb: ?mixed,
+    config?: ?AnimatedNodeConfig,
+  ) {
+    super(config);
+    this.#nodeKeys = nodeKeys;
+    this.#nodes = nodes;
+    this.#style = style;
+
+    if ((Platform.OS as string) === 'web') {
+      // $FlowIgnore[cannot-write] - Intentional shadowing.
+      this.__getValueForStyle = resultStyle => [
+        originalStyleForWeb,
+        resultStyle,
+      ];
+    }
+  }
+
+  __getValue(): FlatStyleForWeb<FlatStyle> | FlatStyle {
+    const style: {[string]: mixed} = {};
+
+    const keys = Object.keys(this.#style);
+    for (let ii = 0, length = keys.length; ii < length; ii++) {
+      const key = keys[ii];
+      const value = this.#style[key];
+
       if (value instanceof AnimatedNode) {
-        result[key] = value.__getValue();
+        style[key] = value.__getValue();
       } else {
-        result[key] = value;
+        style[key] = value;
       }
     }
 
-    return Platform.OS === 'web' ? [this._inputStyle, result] : result;
+    return this.__getValueForStyle(style);
+  }
+
+  /**
+   * See the constructor, where this is shadowed on web platforms.
+   */
+  __getValueForStyle<TStyle: FlatStyle>(
+    style: TStyle,
+  ): FlatStyleForWeb<TStyle> | TStyle {
+    return style;
+  }
+
+  /**
+   * Mutates the supplied `style` object such that animated nodes are replaced
+   * with rasterized values.
+   */
+  __replaceAnimatedNodeWithValues(style: {[string]: mixed}): void {
+    const keys = Object.keys(style);
+    for (let ii = 0, length = keys.length; ii < length; ii++) {
+      const key = keys[ii];
+      const maybeNode = this.#style[key];
+
+      if (key === 'transform' && maybeNode instanceof AnimatedTransform) {
+        style[key] = maybeNode.__getValueWithStaticTransforms(
+          // NOTE: This check should not be necessary, but the types are not
+          // enforced as of this writing.
+          Array.isArray(style[key]) ? style[key] : [],
+        );
+      } else if (maybeNode instanceof AnimatedObject) {
+        style[key] = maybeNode.__getValueWithStaticObject(style[key]);
+      } else if (maybeNode instanceof AnimatedNode) {
+        style[key] = maybeNode.__getValue();
+      }
+    }
   }
 
   __getAnimatedValue(): Object {
-    const result: {[string]: any} = {};
-    for (const key in this._style) {
-      const value = this._style[key];
-      if (value instanceof AnimatedNode) {
-        result[key] = value.__getAnimatedValue();
-      }
+    const style: {[string]: mixed} = {};
+
+    const nodeKeys = this.#nodeKeys;
+    const nodes = this.#nodes;
+    for (let ii = 0, length = nodes.length; ii < length; ii++) {
+      const key = nodeKeys[ii];
+      const node = nodes[ii];
+      style[key] = node.__getAnimatedValue();
     }
-    return result;
+
+    return style;
   }
 
   __attach(): void {
-    for (const key in this._style) {
-      const value = this._style[key];
-      if (value instanceof AnimatedNode) {
-        value.__addChild(this);
-      }
+    const nodes = this.#nodes;
+    for (let ii = 0, length = nodes.length; ii < length; ii++) {
+      const node = nodes[ii];
+      node.__addChild(this);
     }
+    super.__attach();
   }
 
   __detach(): void {
-    for (const key in this._style) {
-      const value = this._style[key];
-      if (value instanceof AnimatedNode) {
-        value.__removeChild(this);
-      }
+    const nodes = this.#nodes;
+    for (let ii = 0, length = nodes.length; ii < length; ii++) {
+      const node = nodes[ii];
+      node.__removeChild(this);
     }
     super.__detach();
   }
 
   __makeNative(platformConfig: ?PlatformConfig) {
-    for (const key in this._style) {
-      const value = this._style[key];
-      if (value instanceof AnimatedNode) {
-        value.__makeNative(platformConfig);
-      }
+    const nodes = this.#nodes;
+    for (let ii = 0, length = nodes.length; ii < length; ii++) {
+      const node = nodes[ii];
+      node.__makeNative(platformConfig);
     }
     super.__makeNative(platformConfig);
   }
 
   __getNativeConfig(): Object {
+    const platformConfig = this.__getPlatformConfig();
     const styleConfig: {[string]: ?number} = {};
-    for (const styleKey in this._style) {
-      if (this._style[styleKey] instanceof AnimatedNode) {
-        const style = this._style[styleKey];
-        style.__makeNative(this.__getPlatformConfig());
-        styleConfig[styleKey] = style.__getNativeTag();
-      }
-      // Non-animated styles are set using `setNativeProps`, no need
-      // to pass those as a part of the node config
+
+    const nodeKeys = this.#nodeKeys;
+    const nodes = this.#nodes;
+    for (let ii = 0, length = nodes.length; ii < length; ii++) {
+      const key = nodeKeys[ii];
+      const node = nodes[ii];
+      node.__makeNative(platformConfig);
+      styleConfig[key] = node.__getNativeTag();
     }
-    NativeAnimatedHelper.validateStyles(styleConfig);
+
+    if (__DEV__) {
+      validateStyles(styleConfig);
+    }
     return {
       type: 'style',
       style: styleConfig,
+      debugID: this.__getDebugID(),
     };
   }
 }
+
+// Supported versions of JSC do not implement the newer Object.hasOwn. Remove
+// this shim when they do.
+// $FlowIgnore[method-unbinding]
+const _hasOwnProp = Object.prototype.hasOwnProperty;
+const hasOwn: (obj: $ReadOnly<{...}>, prop: string) => boolean =
+  // $FlowIgnore[method-unbinding]
+  Object.hasOwn ?? ((obj, prop) => _hasOwnProp.call(obj, prop));

@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Image, ActivityIndicator, FlatList, Dimensions,
   Platform, StatusBar, Animated, KeyboardAvoidingView, RefreshControl,
-  SafeAreaView,
+  SafeAreaView, Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -124,12 +124,120 @@ const Badge = ({ label, color = C.amber }) => (
 );
 
 // ══════════════════════════════════════════════════════════════════════════════
+// FULLSCREEN PHOTO VIEWER
+// ══════════════════════════════════════════════════════════════════════════════
+const PhotoViewer = ({ photos, startIndex, onClose }) => {
+  const [current, setCurrent] = useState(startIndex);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+  }, []);
+
+  const close = () => {
+    Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start(onClose);
+  };
+
+  return (
+    <Modal visible animationType="none" transparent statusBarTranslucent>
+      <Animated.View style={[s.photoViewerBg, { opacity: fadeAnim }]}>
+        {/* Foto */}
+        <Image
+          source={{ uri: photos[current].url }}
+          style={s.photoViewerImg}
+          resizeMode="contain"
+        />
+
+        {/* Autor */}
+        <Text style={s.photoViewerAuthor}>📸 {photos[current].username}</Text>
+
+        {/* Navigace */}
+        {photos.length > 1 && (
+          <View style={s.photoViewerNav}>
+            <TouchableOpacity
+              style={[s.photoNavBtn, current === 0 && s.photoNavBtnDisabled]}
+              onPress={() => current > 0 && setCurrent(c => c - 1)}
+              activeOpacity={0.7}>
+              <Ionicons name="chevron-back" size={26} color={current === 0 ? C.creamDim : C.amber} />
+            </TouchableOpacity>
+            <Text style={s.photoViewerCount}>{current + 1} / {photos.length}</Text>
+            <TouchableOpacity
+              style={[s.photoNavBtn, current === photos.length - 1 && s.photoNavBtnDisabled]}
+              onPress={() => current < photos.length - 1 && setCurrent(c => c + 1)}
+              activeOpacity={0.7}>
+              <Ionicons name="chevron-forward" size={26} color={current === photos.length - 1 ? C.creamDim : C.amber} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Zavřít */}
+        <TouchableOpacity style={s.photoViewerClose} onPress={close} activeOpacity={0.8}>
+          <Ionicons name="close" size={26} color={C.white} />
+        </TouchableOpacity>
+      </Animated.View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USER PROFILE MINI-MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+const UserProfileModal = ({ username, onClose }) => {
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch(`/users/find?q=${encodeURIComponent(username)}`)
+      .then(d => setProfile(d))
+      .catch(() => setProfile(null))
+      .finally(() => setLoading(false));
+  }, [username]);
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard, { maxHeight: SCREEN_H * 0.6 }]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>👤 Profil</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
+          </View>
+          {loading ? <ActivityIndicator color={C.amber} style={{ margin: 24 }} /> : !profile ? (
+            <Text style={[s.emptySubtext, { margin: 20 }]}>Profil nenalezen.</Text>
+          ) : (
+            <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+              <Avatar url={profile.avatar_url} size={70} style={{ marginBottom: 10 }} />
+              <Text style={s.profileName}>{profile.username}</Text>
+              {profile.bio && <Text style={[s.bioText, { marginTop: 6, paddingHorizontal: 10 }]}>{profile.bio}</Text>}
+              <View style={[s.foundUserStats, { marginTop: 16 }]}>
+                <View style={s.statBox}>
+                  <Text style={s.statNum}>{profile.total_visits}</Text>
+                  <Text style={s.statLabel}>hospůdek</Text>
+                </View>
+                <View style={s.statBox}>
+                  <Text style={s.statNum}>{profile.avg_rating?.toFixed(1) ?? '–'}</Text>
+                  <Text style={s.statLabel}>průměr ⭐</Text>
+                </View>
+              </View>
+              <Text style={[s.foundUserDate, { marginTop: 12 }]}>
+                Člen od {new Date(profile.created_at).toLocaleDateString('cs-CZ')}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PUB DETAIL MODAL – plný profil podniku
 // ══════════════════════════════════════════════════════════════════════════════
 const PubDetailModal = ({ pub, onClose }) => {
-  const [reviews, setReviews] = useState([]);
-  const [photos, setPhotos]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [reviews, setReviews]       = useState([]);
+  const [photos, setPhotos]         = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [photoViewer, setPhotoViewer] = useState(null); // { index }
+  const [userModal, setUserModal]   = useState(null);   // username string
 
   useEffect(() => {
     Promise.all([
@@ -137,6 +245,12 @@ const PubDetailModal = ({ pub, onClose }) => {
       apiFetch(`/pubs/${pub.id}/photos`).catch(() => []),
     ]).then(([r, p]) => { setReviews(r); setPhotos(p); setLoading(false); });
   }, [pub.id]);
+
+  const openAddress = () => {
+    if (!pub.address) return;
+    const query = encodeURIComponent(pub.address);
+    Linking.openURL(`https://nominatim.openstreetmap.org/ui/search.html?q=${query}`);
+  };
 
   return (
     <Modal visible animationType="slide" transparent>
@@ -157,15 +271,25 @@ const PubDetailModal = ({ pub, onClose }) => {
                 </View>
               )}
             </View>
-            {pub.address       && <Text style={s.pubDetailRow}>📍 {pub.address}</Text>}
+
+            {/* Adresa – klikatelná → OSM Nominatim */}
+            {pub.address && (
+              <TouchableOpacity onPress={openAddress} activeOpacity={0.7} style={s.pubDetailRowTouchable}>
+                <Ionicons name="location" size={14} color={C.blue} style={{ marginTop: 1 }} />
+                <Text style={[s.pubDetailRow, { color: C.blue, textDecorationLine: 'underline', marginBottom: 0 }]}>
+                  {pub.address}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {pub.opening_hours && <Text style={s.pubDetailRow}>🕐 {pub.opening_hours}</Text>}
-            {pub.note          && <View style={s.pubDetailNote}><Text style={s.pubDetailNoteText}>⚠️ {pub.note}</Text></View>}
+            {pub.note && <View style={s.pubDetailNote}><Text style={s.pubDetailNoteText}>⚠️ {pub.note}</Text></View>}
 
             {pub.beers && (
               <View style={{ marginTop: 10 }}>
                 <Text style={s.sectionLabel}>Točená piva</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                  {pub.beers.split(',').map(b => b.trim()).filter(Boolean).map((b,i) => (
+                  {pub.beers.split(',').map(b => b.trim()).filter(Boolean).map((b, i) => (
                     <Badge key={i} label={`🍺 ${b}`} color={C.amber} />
                   ))}
                 </View>
@@ -174,32 +298,49 @@ const PubDetailModal = ({ pub, onClose }) => {
 
             {loading ? <ActivityIndicator color={C.amber} style={{ marginVertical: 20 }} /> : (
               <>
+                {/* Fotky – klikatelné, otevřou fullscreen */}
                 {photos.length > 0 && (
                   <View style={{ marginTop: 14 }}>
                     <Text style={s.sectionLabel}>Fotky ({photos.length})</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       {photos.map((p, i) => (
-                        <Image key={i} source={{ uri: p.url }}
-                          style={{ width: 120, height: 90, borderRadius: 10, marginRight: 8 }}
-                          resizeMode="cover" />
+                        <TouchableOpacity key={i} onPress={() => setPhotoViewer(i)} activeOpacity={0.85}>
+                          <Image
+                            source={{ uri: p.url }}
+                            style={{ width: 120, height: 90, borderRadius: 10, marginRight: 8 }}
+                            resizeMode="cover"
+                          />
+                          <View style={s.photoThumbOverlay}>
+                            <Ionicons name="expand" size={14} color={C.white} />
+                          </View>
+                        </TouchableOpacity>
                       ))}
                     </ScrollView>
                   </View>
                 )}
 
+                {/* Recenze – avatar + jméno klikatelné */}
                 <View style={{ marginTop: 14 }}>
                   <Text style={s.sectionLabel}>
                     Hodnocení Hospůdkobraníků {reviews.length > 0 ? `(${reviews.length})` : ''}
                   </Text>
-                  {reviews.length === 0 && <Text style={s.emptySubtext}>Zatím žádné hodnocení. Buď první! 🍺</Text>}
+                  {reviews.length === 0 && (
+                    <Text style={s.emptySubtext}>Zatím žádné hodnocení. Buď první! 🍺</Text>
+                  )}
                   {reviews.map((r, i) => (
                     <View key={i} style={s.reviewCard}>
                       <View style={s.reviewHeader}>
-                        <Avatar url={r.avatar_url} size={34} />
-                        <View style={{ flex: 1, marginLeft: 8 }}>
-                          <Text style={s.reviewUser}>{r.username}</Text>
-                          <Stars rating={r.rating} size={12} />
-                        </View>
+                        {/* Kliknutí na avatara/jméno → mini profil */}
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                          onPress={() => setUserModal(r.username)}
+                          activeOpacity={0.7}>
+                          <Avatar url={r.avatar_url} size={34} />
+                          <View style={{ marginLeft: 8 }}>
+                            <Text style={[s.reviewUser, { textDecorationLine: 'underline' }]}>{r.username}</Text>
+                            <Stars rating={r.rating} size={12} />
+                          </View>
+                        </TouchableOpacity>
                         <Text style={s.reviewDate}>{new Date(r.logged_at).toLocaleDateString('cs-CZ')}</Text>
                       </View>
                       {r.note ? <Text style={s.reviewNote}>"{r.note}"</Text> : null}
@@ -211,6 +352,20 @@ const PubDetailModal = ({ pub, onClose }) => {
           </ScrollView>
         </View>
       </View>
+
+      {/* Fullscreen photo viewer */}
+      {photoViewer !== null && (
+        <PhotoViewer
+          photos={photos}
+          startIndex={photoViewer}
+          onClose={() => setPhotoViewer(null)}
+        />
+      )}
+
+      {/* User profile mini-modal */}
+      {userModal && (
+        <UserProfileModal username={userModal} onClose={() => setUserModal(null)} />
+      )}
     </Modal>
   );
 };
@@ -842,6 +997,8 @@ const VisitsScreen = ({ user }) => {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sortBy, setSortBy]         = useState('date');
+  const [detailPub, setDetailPub]   = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => { loadVisits(); }, []);
 
@@ -850,6 +1007,21 @@ const VisitsScreen = ({ user }) => {
     try { const data = await cached(`visits_detail_${user.id}`, () => apiFetch('/visits/my?detail=1'), CACHE_TTL); setVisits(data); }
     catch {}
     setLoading(false); setRefreshing(false);
+  };
+
+  const openPubDetail = async (item) => {
+    setDetailLoading(true);
+    try {
+      const pub = await cached(`pub_${item.pub_id}`, () => apiFetch(`/pubs/${item.pub_id}`), 10 * 60 * 1000);
+      setDetailPub(pub);
+    } catch {
+      // fallback – sestavíme minimální pub objekt z dat návštěvy
+      setDetailPub({
+        id: item.pub_id, name: item.pub_name, type: item.pub_type,
+        avg_rating: 0, visit_count: 0, card_payment: false,
+        address: null, opening_hours: null, beers: null, note: null,
+      });
+    } finally { setDetailLoading(false); }
   };
 
   const sorted = useMemo(() => {
@@ -861,7 +1033,7 @@ const VisitsScreen = ({ user }) => {
   }, [visits, sortBy]);
 
   const renderVisit = ({ item }) => (
-    <View style={s.visitCard}>
+    <TouchableOpacity style={s.visitCard} onPress={() => openPubDetail(item)} activeOpacity={0.75}>
       <View style={s.visitCardRow}>
         <Text style={s.visitCardEmoji}>🍺</Text>
         <View style={{ flex:1 }}>
@@ -869,13 +1041,16 @@ const VisitsScreen = ({ user }) => {
           <Text style={s.visitCardType}>{item.pub_type}</Text>
           <Stars rating={item.rating} size={13} />
         </View>
-        <View style={{ alignItems:'flex-end' }}>
-          <Text style={s.visitCardDate}>{new Date(item.logged_at).toLocaleDateString('cs-CZ')}</Text>
-          <Text style={s.visitCardTime}>{new Date(item.logged_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'})}</Text>
+        <View style={{ alignItems:'flex-end', gap: 4 }}>
+          <View style={{ alignItems:'flex-end' }}>
+            <Text style={s.visitCardDate}>{new Date(item.logged_at).toLocaleDateString('cs-CZ')}</Text>
+            <Text style={s.visitCardTime}>{new Date(item.logged_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'})}</Text>
+          </View>
+          <Ionicons name="information-circle-outline" size={18} color={C.amber} />
         </View>
       </View>
       {item.note ? <Text style={s.visitCardNote}>"{item.note}"</Text> : null}
-    </View>
+    </TouchableOpacity>
   );
 
   if (loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large" /></View>;
@@ -914,6 +1089,16 @@ const VisitsScreen = ({ user }) => {
           <Text style={s.emptyText}>Zatím žádné hospůdky</Text>
           <Text style={s.emptySubtext}>Jdi na mapu a odklikni svoji první!</Text></View>}
       />
+
+      {/* Loading overlay při načítání detailu */}
+      {detailLoading && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor:'rgba(0,0,0,0.45)', alignItems:'center', justifyContent:'center' }]}>
+          <ActivityIndicator color={C.amber} size="large" />
+        </View>
+      )}
+
+      {/* Detail hospůdky */}
+      {detailPub && <PubDetailModal pub={detailPub} onClose={() => setDetailPub(null)} />}
     </View>
   );
 };
@@ -1345,8 +1530,21 @@ const s = StyleSheet.create({
 
   pubDetailMeta:     { flexDirection:'row', flexWrap:'wrap', gap:8, alignItems:'center', marginBottom:10 },
   pubDetailRow:      { color:C.creamDim, fontSize:14, marginBottom:6 },
+  pubDetailRowTouchable: { flexDirection:'row', alignItems:'flex-start', gap:6, marginBottom:6 },
   pubDetailNote:     { backgroundColor:'#1F1000', borderRadius:10, padding:10, marginVertical:6, borderLeftWidth:3, borderLeftColor:C.gold },
   pubDetailNoteText: { color:C.gold, fontSize:13 },
+
+  photoThumbOverlay: { position:'absolute', bottom:4, right:12, backgroundColor:'rgba(0,0,0,0.45)', borderRadius:6, padding:3 },
+
+  // PHOTO VIEWER FULLSCREEN
+  photoViewerBg:    { flex:1, backgroundColor:'rgba(0,0,0,0.96)', justifyContent:'center', alignItems:'center' },
+  photoViewerImg:   { width:SCREEN_W, height:SCREEN_H * 0.72 },
+  photoViewerClose: { position:'absolute', top:50, right:20, backgroundColor:'rgba(0,0,0,0.6)', borderRadius:22, padding:8 },
+  photoViewerNav:   { flexDirection:'row', alignItems:'center', gap:20, marginTop:16 },
+  photoNavBtn:      { backgroundColor:'rgba(255,255,255,0.1)', borderRadius:24, padding:8 },
+  photoNavBtnDisabled:{ opacity:0.3 },
+  photoViewerCount: { color:C.cream, fontWeight:'700', fontSize:15 },
+  photoViewerAuthor:{ color:C.creamDim, fontSize:13, marginTop:8 },
 
   reviewCard:   { backgroundColor:C.bgCardAlt, borderRadius:12, padding:12, marginBottom:8, borderWidth:1, borderColor:C.border },
   reviewHeader: { flexDirection:'row', alignItems:'center', marginBottom:6 },

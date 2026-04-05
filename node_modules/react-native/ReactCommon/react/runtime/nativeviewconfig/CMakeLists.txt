@@ -6,14 +6,15 @@
 cmake_minimum_required(VERSION 3.13)
 set(CMAKE_VERBOSE_MAKEFILE on)
 
-add_compile_options(-std=c++20)
+include(${REACT_COMMON_DIR}/cmake-utils/react-native-flags.cmake)
 
 file(GLOB_RECURSE bridgeless_nativeviewconfig_SRC CONFIGURE_DEPENDS *.cpp)
 add_library(
         bridgelessnativeviewconfig
-        STATIC
+        OBJECT
         ${bridgeless_nativeviewconfig_SRC}
 )
 target_include_directories(bridgelessnativeviewconfig PUBLIC .)
 
 target_link_libraries(bridgelessnativeviewconfig jsi)
+target_compile_reactnative_options(bridgelessnativeviewconfig PRIVATE)

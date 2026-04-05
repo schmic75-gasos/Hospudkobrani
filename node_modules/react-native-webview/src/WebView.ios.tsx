@@ -8,7 +8,7 @@ import { Image, View, ImageSourcePropType, HostComponent } from 'react-native';
 import invariant from 'invariant';
 
 import RNCWebView, { Commands, NativeProps } from './RNCWebViewNativeComponent';
-import RNCWebViewModule from './NativeRNCWebView';
+import RNCWebViewModule from './NativeRNCWebViewModule';
 
 import {
   defaultOriginWhitelist,
@@ -80,6 +80,7 @@ const WebViewComponent = forwardRef<{}, IOSWebViewProps>(
       source,
       nativeConfig,
       allowsInlineMediaPlayback,
+      allowsPictureInPictureMediaPlayback = true,
       allowsAirPlayForMediaPlayback,
       mediaPlaybackRequiresUserAction,
       dataDetectorTypes,
@@ -163,6 +164,10 @@ const WebViewComponent = forwardRef<{}, IOSWebViewProps>(
     );
 
     useWarnIfChanges(allowsInlineMediaPlayback, 'allowsInlineMediaPlayback');
+    useWarnIfChanges(
+      allowsPictureInPictureMediaPlayback,
+      'allowsPictureInPictureMediaPlayback'
+    );
     useWarnIfChanges(
       allowsAirPlayForMediaPlayback,
       'allowsAirPlayForMediaPlayback'
@@ -262,6 +267,9 @@ const WebViewComponent = forwardRef<{}, IOSWebViewProps>(
         }
         allowsAirPlayForMediaPlayback={allowsAirPlayForMediaPlayback}
         allowsInlineMediaPlayback={allowsInlineMediaPlayback}
+        allowsPictureInPictureMediaPlayback={
+          allowsPictureInPictureMediaPlayback
+        }
         incognito={incognito}
         mediaPlaybackRequiresUserAction={mediaPlaybackRequiresUserAction}
         newSource={newSource}

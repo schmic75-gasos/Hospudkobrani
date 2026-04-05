@@ -1,4 +1,4 @@
-internal final class Conversions {
+public struct Conversions {
   /**
    Converts an array to tuple. Because of tuples nature, it's not possible to convert an array of any size, so we can support only up to some fixed size.
    */
@@ -50,7 +50,7 @@ internal final class Conversions {
    - The dictionary is missing some of the given keys (`MissingKeysException`)
    - Some of the values cannot be cast to specified type (`CastingValuesException`)
    */
-  static func pickValues<ValueType>(from dict: [String: Any], byKeys keys: [String], as type: ValueType.Type) throws -> [ValueType] {
+  public static func pickValues<ValueType>(from dict: [String: Any], byKeys keys: [String], as type: ValueType.Type) throws -> [ValueType] {
     var result = (
       values: [ValueType](),
       missingKeys: [String](),
@@ -77,11 +77,17 @@ internal final class Conversions {
   }
 
   /**
-   Converts hex string to `UIColor` or throws an exception if the string is corrupted.
+   Converts color string to `UIColor` or throws an exception if the string is corrupted.
    */
-  static func toColor(hexString hex: String) throws -> UIColor {
-    var hexStr = hex
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+  static func toColor(colorString: String) throws -> UIColor {
+    let input = colorString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Handle RGB format
+    if input.hasPrefix("rgb") {
+      return try fromRGBString(input)
+    }
+
+    var hexStr = input
       .replacingOccurrences(of: "#", with: "")
 
     // If just RGB, set alpha to maximum
@@ -103,11 +109,33 @@ internal final class Conversions {
 
     guard hexStr.range(of: #"^[0-9a-fA-F]{8}$"#, options: .regularExpression) != nil,
           Scanner(string: hexStr).scanHexInt64(&rgba) else {
-      throw InvalidHexColorException(hex)
+      throw InvalidHexColorException(input)
     }
     return try toColor(rgba: rgba)
   }
 
+  private static func fromRGBString(_ rgbString: String) throws -> UIColor {
+    let components = rgbString
+      .replacingOccurrences(of: "rgba(", with: "")
+      .replacingOccurrences(of: "rgb(", with: "")
+      .replacingOccurrences(of: ")", with: "")
+      .split(separator: ",")
+      .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+
+    guard components.count >= 3,
+      components[0] >= 0 && components[0] <= 255,
+      components[1] >= 0 && components[1] <= 255,
+      components[2] >= 0 && components[2] <= 255 else {
+      throw InvalidRGBColorException(rgbString)
+    }
+
+    let alpha = components.count > 3 ? Double(components[3]) : 1.0
+    return UIColor(
+      red: CGFloat(components[0]) / 255.0,
+      green: CGFloat(components[1]) / 255.0,
+      blue: CGFloat(components[2]) / 255.0,
+      alpha: alpha)
+  }
   /**
    Converts an integer for ARGB color to `UIColor`. Since the alpha channel is represented by first 8 bits,
    it's optional out of the box. React Native converts colors to such format.
@@ -156,26 +184,34 @@ internal final class Conversions {
     appContext: AppContext? = nil,
     dynamicType: AnyDynamicType? = nil
   ) -> Any {
+    if let appContext {
+      // Dynamic type is provided
+      if dynamicType as? DynamicVoidType == nil, let result = try? dynamicType?.convertResult(value as Any, appContext: appContext) {
+        return result
+      }
+      // Dynamic type can be obtained from the value
+      if let value = value as? AnyArgument, let result = try? type(of: value).getDynamicType().convertResult(value as Any, appContext: appContext) {
+        return result
+      }
+    }
+    return convertFunctionResultInRuntime(value, appContext: appContext)
+  }
+
+  /**
+   Converts the function result to the type that can later be converted to a JS value.
+   As opposed to `convertFunctionResult`, it has no information about the dynamic type,
+   so it is quite limited, e.g. it does not handle shared objects.
+   Currently it is required to handle results of the promise.
+   */
+  static func convertFunctionResultInRuntime<ValueType>(_ value: ValueType?, appContext: AppContext? = nil) -> Any {
     if let value = value as? Record {
-      return value.toDictionary()
+      return value.toDictionary(appContext: appContext)
     }
     if let value = value as? [Record] {
-      return value.map { $0.toDictionary() }
+      return value.map { $0.toDictionary(appContext: appContext) }
     }
-    if let appContext {
-      if let value = value as? JavaScriptObjectBuilder {
-        return try? value.build(appContext: appContext)
-      }
-
-      // If the returned value is a native shared object, create its JS representation and add the pair to the registry of shared objects.
-      if let value = value as? SharedObject, let dynamicType = asDynamicSharedObjectType(dynamicType) {
-        guard let object = try? appContext.newObject(nativeClassId: dynamicType.typeIdentifier) else {
-          log.warn("Unable to create a JS object for \(dynamicType.description)")
-          return Optional<Any>.none
-        }
-        appContext.sharedObjectRegistry.add(native: value, javaScript: object)
-        return object
-      }
+    if let value = value as? any Enumerable {
+      return value.anyRawValue
     }
     return value as Any
   }
@@ -192,13 +228,37 @@ internal final class Conversions {
   }
 
   /**
-   An exception that can be thrown by convertible types, when given value cannot be converted.
+   An exception thrown when the native value cannot be converted to JavaScript value.
    */
-  internal class ConvertingException<TargetType>: GenericException<Any?> {
+  internal final class ConversionToJSFailedException: GenericException<(kind: JavaScriptValueKind, nativeType: Any.Type)> {
     override var code: String {
-      "ERR_CONVERTING_FAILED"
+      "ERR_CONVERTING_TO_JS_FAILED"
     }
     override var reason: String {
+      "Conversion from native '\(param.nativeType)' to JavaScript value of type '\(param.kind.rawValue)' failed"
+    }
+  }
+
+  /**
+   An exception thrown when the JavaScript value cannot be converted to native value.
+   */
+  internal final class ConversionToNativeFailedException: GenericException<(kind: JavaScriptValueKind, nativeType: Any.Type)> {
+    override var code: String {
+      "ERR_CONVERTING_TO_NATIVE_FAILED"
+    }
+    override var reason: String {
+      "Conversion from JavaScript value of type '\(param.kind.rawValue)' to native '\(param.nativeType)' failed"
+    }
+  }
+
+  /**
+   An exception that can be thrown by convertible types, when given value cannot be converted.
+   */
+  public class ConvertingException<TargetType>: GenericException<Any?> {
+    public override var code: String {
+      "ERR_CONVERTING_FAILED"
+    }
+    public override var reason: String {
       "Cannot convert '\(String(describing: param))' to \(TargetType.self)"
     }
   }
@@ -257,6 +317,15 @@ internal final class Conversions {
   }
 
   /**
+   An exception used when the rgb color string is invalid.
+   */
+  internal class InvalidRGBColorException: GenericException<String> {
+    override var reason: String {
+      "Provided rgb color string '\(param)' is invalid"
+    }
+  }
+
+  /**
    An exception used when the integer value of the color would result in an overflow of `UInt32`.
    */
   internal class HexColorOverflowException: GenericException<UInt64> {
@@ -264,14 +333,4 @@ internal final class Conversions {
       "Provided hex color '\(param)' would result in an overflow"
     }
   }
-}
-
-/**
- Unwraps the dynamic optional type and returns as a dynamic shared object type if possible.
- */
-private func asDynamicSharedObjectType(_ dynamicType: AnyDynamicType?) -> DynamicSharedObjectType? {
-  if let dynamicType = dynamicType as? DynamicOptionalType {
-    return dynamicType.wrappedType as? DynamicSharedObjectType
-  }
-  return dynamicType as? DynamicSharedObjectType
 }

@@ -8,9 +8,11 @@
 #pragma once
 
 #include <react/renderer/imagemanager/ImageRequest.h>
+#include <react/renderer/imagemanager/ImageRequestParams.h>
 #include <react/renderer/imagemanager/primitives.h>
 
 #ifdef ANDROID
+#include <folly/dynamic.h>
 #include <react/renderer/mapbuffer/MapBuffer.h>
 #include <react/renderer/mapbuffer/MapBufferBuilder.h>
 #endif
@@ -25,10 +27,10 @@ class ImageState final {
   ImageState(
       const ImageSource& imageSource,
       ImageRequest imageRequest,
-      const Float blurRadius)
+      const ImageRequestParams& imageRequestParams)
       : imageSource_(imageSource),
         imageRequest_(std::make_shared<ImageRequest>(std::move(imageRequest))),
-        blurRadius_(blurRadius){};
+        imageRequestParams_(imageRequestParams) {}
 
   /*
    * Returns stored ImageSource object.
@@ -41,11 +43,13 @@ class ImageState final {
    */
   const ImageRequest& getImageRequest() const;
 
-  Float getBlurRadius() const;
-
+  /*
+   * Returns stored ImageRequestParams object.
+   */
+  const ImageRequestParams& getImageRequestParams() const;
 #ifdef ANDROID
   ImageState(const ImageState& previousState, folly::dynamic data)
-      : blurRadius_{0} {};
+      : imageRequestParams_{} {};
 
   /*
    * Empty implementation for Android because it doesn't use this class.
@@ -53,16 +57,12 @@ class ImageState final {
   folly::dynamic getDynamic() const {
     return {};
   };
-
-  MapBuffer getMapBuffer() const {
-    return MapBufferBuilder::EMPTY();
-  };
 #endif
 
  private:
   ImageSource imageSource_;
   std::shared_ptr<ImageRequest> imageRequest_;
-  const Float blurRadius_;
+  ImageRequestParams imageRequestParams_;
 };
 
 } // namespace facebook::react
