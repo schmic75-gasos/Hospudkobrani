@@ -17,7 +17,8 @@
         "NSLocationWhenInUseUsageDescription": "Potřebujeme tvou polohu pro ověření, že jsi u hospůdky.",
         "NSLocationAlwaysUsageDescription": "Potřebujeme tvou polohu pro ověření, že jsi u hospůdky.",
         "NSCameraUsageDescription": "Fotit hospůdky!",
-        "NSPhotoLibraryUsageDescription": "Přidat fotku z galerie."
+        "NSPhotoLibraryUsageDescription": "Přidat fotku z galerie.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -32,8 +33,6 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.RECORD_AUDIO"
       ],
       "config": {
@@ -61,6 +60,12 @@
       "eas": {
         "projectId": "e549e18b-82ac-48e2-a4f1-de06e3b76931"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/e549e18b-82ac-48e2-a4f1-de06e3b76931"
     }
   }
 }

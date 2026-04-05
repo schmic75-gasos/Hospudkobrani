@@ -1640,7 +1640,7 @@ const s = StyleSheet.create({
   emptyEmoji:  { fontSize:60, marginBottom:12 },
   emptyText:   { color:C.cream, fontSize:18, fontWeight:'700' },
   emptySubtext:{ color:C.creamDim, fontSize:14, marginTop:6, textAlign:'center' },
-  versionText: { color:C.border, fontSize:12, textAlign:'center', marginTop:20, paddingBottom:10 },
+  versionText: { color:C.amber, fontSize:12, textAlign:'center', marginTop:20, paddingBottom:10 },
 
   tabBar:  { flexDirection:'row', backgroundColor:C.tabBar, borderTopWidth:1, borderTopColor:C.border, paddingBottom:Platform.OS==='ios'?24:8, paddingTop:8 },
   tabItem: { flex:1, alignItems:'center', position:'relative', paddingVertical:4 },
