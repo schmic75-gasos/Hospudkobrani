@@ -1057,7 +1057,7 @@ const VisitsScreen = ({ user }) => {
   return (
     <View style={s.screen}>
       <View style={s.pageHeader}>
-        <Text style={s.pageTitle}>Moje hospůdky</Text>
+        <Text style={s.pageTitle}>Moje návštěvy</Text>
         <Text style={s.pageSubtitle}>{visits.length} navštívených 🏆</Text>
       </View>
       <View style={s.sortBar}>
@@ -1070,9 +1070,9 @@ const VisitsScreen = ({ user }) => {
       {visits.length > 0 && (
         <View style={s.statsRow}>
           {[
-            [(visits.reduce((a,v)=>a+v.rating,0)/visits.length).toFixed(1),'prům. hod.'],
-            [Math.max(...visits.map(v=>v.rating)),'nejlepší'],
-            [visits.filter(v=>v.rating>=4).length,'oblíbených'],
+            [(visits.reduce((a,v)=>a+v.rating,0)/visits.length).toFixed(1),'prům. hodnocení.'],
+            [Math.max(...visits.map(v=>v.rating)),'nejlepší hodnocení'],
+            [visits.filter(v=>v.rating>=4).length,'oblíbených podniků'],
           ].map(([val,label],i) => (
             <View key={i} style={s.statBox}>
               <Text style={s.statNum}>{val}</Text>
@@ -1086,7 +1086,7 @@ const VisitsScreen = ({ user }) => {
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.amber} colors={[C.amber]}
           onRefresh={() => { setRefreshing(true); loadVisits(true); }} />}
         ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>🍺</Text>
-          <Text style={s.emptyText}>Zatím žádné hospůdky</Text>
+          <Text style={s.emptyText}>Zatím žádné návštěvy</Text>
           <Text style={s.emptySubtext}>Jdi na mapu a odklikni svoji první!</Text></View>}
       />
 
