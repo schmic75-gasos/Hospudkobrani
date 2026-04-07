@@ -1,7 +1,8 @@
 /**
- * Hospůdkobraní – App.js v1.4
- * Změny: Komunita tab (žebříček, chaty, hledání, galerie), Prvochlasty,
- *        nové typy výzev, renovovaný profil, WebView + Leaflet s tile cache
+ * Hospůdkobraní – App.js v1.2.1
+ * Změny: offline hospůdky + stahování oblastí, návrhy nových hospůdek, nahlašování chyb,
+ *        distance-based Odkliknout tlačítko, oprava vracení mapy, offline login fix,
+ *        viditelnost poznámek a fotek, lajky fotek v galerii, oprava výzev (cap na target)
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -97,6 +98,7 @@ const MAP_HTML = `<!DOCTYPE html>
   }
   document.addEventListener('message',handle);
   window.addEventListener('message',handle);
+  map.on('click',function(e){postRN({type:'mapClick',lat:e.latlng.lat,lng:e.latlng.lng});});
   window.onload=function(){postRN({type:'ready'});};
 <\/script></body></html>`;
 
@@ -123,6 +125,20 @@ const cached = async (k, fn, ttl=TTL) => {
   return data;
 };
 const bust = k => { delete mem[k]; AsyncStorage.removeItem(`c_${k}`).catch(()=>{}); };
+
+// ─── OFFLINE OBLASTI (státy) ──────────────────────────────────────────────────
+const COUNTRIES = [
+  { code:'CZ', name:'Česká republika', flag:'🇨🇿' },
+  { code:'SK', name:'Slovensko',        flag:'🇸🇰' },
+  { code:'AT', name:'Rakousko',         flag:'🇦🇹' },
+  { code:'DE', name:'Německo',          flag:'🇩🇪' },
+  { code:'PL', name:'Polsko',           flag:'🇵🇱' },
+  { code:'HU', name:'Maďarsko',         flag:'🇭🇺' },
+];
+const getOfflinePubs   = async () => { const r=await AsyncStorage.getItem('offline_pubs');   return r?JSON.parse(r):[]; };
+const getOfflineAreas  = async () => { const r=await AsyncStorage.getItem('offline_areas');  return r?JSON.parse(r):[]; };
+const saveOfflinePubs  = async d  => AsyncStorage.setItem('offline_pubs',JSON.stringify(d));
+const saveOfflineAreas = async d  => AsyncStorage.setItem('offline_areas',JSON.stringify(d));
 
 // ─── OFFLINE ──────────────────────────────────────────────────────────────────
 const getQ   = async () => { const r=await AsyncStorage.getItem('oq'); return r?JSON.parse(r):[]; };
@@ -254,6 +270,7 @@ const PubDetailModal = ({ pub, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [pv, setPv] = useState(null);
   const [userModal, setUserModal] = useState(null);
+  const [reportMod, setReportMod] = useState(false);
 
   useEffect(()=>{
     Promise.all([
@@ -268,7 +285,12 @@ const PubDetailModal = ({ pub, onClose }) => {
         <View style={[s.modalCard,{maxHeight:SH*0.88}]}>
           <View style={s.modalHeader}>
             <Text style={s.modalTitle}>{pub.name}</Text>
-            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+              <TouchableOpacity onPress={()=>setReportMod(true)}>
+                <Ionicons name="flag-outline" size={19} color={C.creamDim}/>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
           </View>
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={{flexDirection:'row',flexWrap:'wrap',gap:6,marginBottom:10}}>
@@ -355,6 +377,7 @@ const PubDetailModal = ({ pub, onClose }) => {
       </View>
       {pv!==null && <PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)}/>}
       {userModal && <UserProfileModal username={userModal} selfId={null} onClose={()=>setUserModal(null)}/>}
+      {reportMod && <ReportPubModal pub={pub} onClose={()=>setReportMod(false)}/>}
     </Modal>
   );
 };
@@ -427,6 +450,212 @@ const FilterModal = ({ filters, onApply, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// OFFLINE OBLASTI MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
+  const [areas, setAreas]         = useState([]);
+  const [downloading, setDl]      = useState(null);
+  const [pubCounts, setPubCounts] = useState({});
+
+  useEffect(()=>{ loadAreas(); },[]);
+
+  const loadAreas = async () => {
+    const a = await getOfflineAreas(); setAreas(a);
+    const pubs = await getOfflinePubs();
+    const cnt = {};
+    pubs.forEach(p=>{ if(p.country){ cnt[p.country]=(cnt[p.country]||0)+1; } });
+    setPubCounts(cnt);
+  };
+
+  const download = async (country) => {
+    setDl(country.code);
+    try {
+      const fresh = await apiFetch(`/pubs?country=${country.code}`);
+      const existing = await getOfflinePubs();
+      const ids = new Set(fresh.map(p=>p.id));
+      const merged = [...existing.filter(p=>!ids.has(p.id)), ...fresh.map(p=>({...p,country:country.code}))];
+      await saveOfflinePubs(merged);
+      const existing2 = await getOfflineAreas();
+      if (!existing2.includes(country.code)) await saveOfflineAreas([...existing2, country.code]);
+      setAreas(a => [...new Set([...a, country.code])]);
+      setPubCounts(c=>({...c,[country.code]:fresh.length}));
+      Alert.alert('Staženo ✓', `${country.name}: ${fresh.length} hospůdek uloženo offline.`);
+      onAreaDownloaded?.();
+    } catch(e) { Alert.alert('Chyba stahování', e.message); }
+    setDl(null);
+  };
+
+  const remove = (code) => {
+    const country = COUNTRIES.find(c=>c.code===code);
+    Alert.alert(`Smazat ${country?.name}?`, 'Hospůdky z dané oblasti budou odebrány z offline úložiště.', [
+      {text:'Zrušit',style:'cancel'},
+      {text:'Smazat',style:'destructive', onPress: async () => {
+        const pubs = await getOfflinePubs();
+        await saveOfflinePubs(pubs.filter(p=>p.country!==code));
+        const newAreas = areas.filter(a=>a!==code);
+        await saveOfflineAreas(newAreas);
+        setAreas(newAreas);
+        setPubCounts(c=>{ const n={...c}; delete n[code]; return n; });
+        onAreaDownloaded?.();
+      }},
+    ]);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard,{maxHeight:SH*0.72}]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Offline oblasti</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+          </View>
+          <Text style={[s.dimText,{marginBottom:14}]}>Stáhni si oblast, abys mohl(a) hrát bez připojení. Stažené hospůdky se aktualizují opětovným stažením.</Text>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {COUNTRIES.map(c=>{
+              const downloaded = areas.includes(c.code);
+              const isDown     = downloading===c.code;
+              const count      = pubCounts[c.code];
+              return (
+                <View key={c.code} style={s.areaRow}>
+                  <Text style={s.areaFlag}>{c.flag}</Text>
+                  <View style={{flex:1}}>
+                    <Text style={[s.areaName,downloaded&&{color:C.green}]}>{c.name}</Text>
+                    {downloaded&&count!=null&&<Text style={s.dimText}>{count} hospůdek</Text>}
+                  </View>
+                  {downloaded ? (
+                    <View style={{flexDirection:'row',gap:8}}>
+                      <TouchableOpacity style={s.areaDlBtn} onPress={()=>download(c)} disabled={!!downloading}>
+                        {isDown?<ActivityIndicator size="small" color={C.bg}/>:<Ionicons name="refresh-outline" size={15} color={C.bg}/>}
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[s.areaDlBtn,{backgroundColor:'#3A0000'}]} onPress={()=>remove(c.code)}>
+                        <Ionicons name="trash-outline" size={15} color={C.red}/>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity style={s.areaDlBtn} onPress={()=>download(c)} disabled={!!downloading}>
+                      {isDown?<ActivityIndicator size="small" color={C.bg}/>:<>
+                        <Ionicons name="download-outline" size={15} color={C.bg}/>
+                        <Text style={s.areaDlT}>Stáhnout</Text>
+                      </>}
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NAVRHNOUT HOSPŮDKU MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+const SuggestPubModal = ({ lat, lng, onClose }) => {
+  const [name, setName]       = useState('');
+  const [type, setType]       = useState('hospoda');
+  const [address, setAddress] = useState('');
+  const [note, setNote]       = useState('');
+  const [busy, setBusy]       = useState(false);
+
+  const submit = async() => {
+    if (!name.trim()) { Alert.alert('Zadej název!'); return; }
+    setBusy(true);
+    try {
+      await apiFetch('/pubs/suggest',{method:'POST',body:JSON.stringify({name,type,address,note,latitude:lat,longitude:lng})});
+      Alert.alert('Díky!','Tvůj návrh byl odeslán ke kontrole. Pokud bude schválen, hospůdka se objeví na mapě.');
+      onClose();
+    } catch(e) { Alert.alert('Chyba',e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Navrhnout hospůdku</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={[s.dimText,{marginBottom:12}]}>📍 {lat?.toFixed(5)}, {lng?.toFixed(5)}</Text>
+              <TextInput style={s.input} placeholder="Název podniku *" placeholderTextColor={C.creamDim} value={name} onChangeText={setName}/>
+              <Text style={s.secLabel}>Typ podniku</Text>
+              <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginBottom:14}}>
+                {PUB_TYPES.map(t=>(
+                  <TouchableOpacity key={t} style={[s.fChip,type===t&&s.fChipOn]} onPress={()=>setType(t)}>
+                    <Text style={[s.fChipT,type===t&&s.fChipTOn]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput style={s.input} placeholder="Adresa (volitelné)" placeholderTextColor={C.creamDim} value={address} onChangeText={setAddress}/>
+              <TextInput style={[s.input,{minHeight:60,textAlignVertical:'top'}]} placeholder="Poznámka (volitelné)" placeholderTextColor={C.creamDim} value={note} onChangeText={setNote} multiline/>
+              <TouchableOpacity style={[s.btnPri,{marginTop:4}]} onPress={submit} disabled={busy}>
+                {busy?<ActivityIndicator color={C.bg}/>:<><Ionicons name="send-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Odeslat návrh</Text></>}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NAHLÁSIT CHYBU MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+const REPORT_REASONS = ['Podnik neexistuje','Chybné informace','Chybná poloha na mapě','Podnik je trvale zavřen','Jiné'];
+
+const ReportPubModal = ({ pub, onClose }) => {
+  const [reason, setReason] = useState('');
+  const [detail, setDetail] = useState('');
+  const [busy, setBusy]     = useState(false);
+
+  const submit = async() => {
+    if (!reason) { Alert.alert('Vyber důvod!'); return; }
+    setBusy(true);
+    try {
+      await apiFetch(`/pubs/${pub.id}/report`,{method:'POST',body:JSON.stringify({reason,detail})});
+      Alert.alert('Nahlášeno','Chyba byla odeslána a bude co nejdříve opravena. Díky!');
+      onClose();
+    } catch(e) { Alert.alert('Chyba',e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Nahlásit chybu</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <Text style={[s.dimText,{marginBottom:14}]}>{pub.name}</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={s.secLabel}>Důvod</Text>
+              {REPORT_REASONS.map(r=>(
+                <TouchableOpacity key={r} style={[s.ansBtn,reason===r&&s.ansBtnOn]} onPress={()=>setReason(r)}>
+                  <Ionicons name={reason===r?'radio-button-on':'radio-button-off'} size={16} color={reason===r?C.amber:C.creamDim}/>
+                  <Text style={[s.ansT,reason===r&&{color:C.cream}]}>{r}</Text>
+                </TouchableOpacity>
+              ))}
+              <Text style={[s.secLabel,{marginTop:10}]}>Popis (volitelné)</Text>
+              <TextInput style={[s.input,{minHeight:70,textAlignVertical:'top'}]} placeholder="Popiš problém podrobněji…" placeholderTextColor={C.creamDim} value={detail} onChangeText={setDetail} multiline/>
+              <TouchableOpacity style={[s.btnPri,{marginTop:4}]} onPress={submit} disabled={busy}>
+                {busy?<ActivityIndicator color={C.bg}/>:<><Ionicons name="flag-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Odeslat nahlášení</Text></>}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAP LAYER MODAL
 // ══════════════════════════════════════════════════════════════════════════════
 const LayerModal = ({ curKey, onSelect, onClose }) => (
@@ -459,20 +688,28 @@ const LayerModal = ({ curKey, onSelect, onClose }) => (
 // MAP SCREEN – WebView + Leaflet
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const webViewRef = useRef(null);
-  const [pubs, setPubs]           = useState([]);
-  const [visited, setVisited]     = useState(new Set());
-  const [loc, setLoc]             = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [mapReady, setMapReady]   = useState(false);
-  const [selPub, setSelPub]       = useState(null);
-  const [showSheet, setShowSheet] = useState(false);
-  const [showInfo, setShowInfo]   = useState(false);
-  const [logModal, setLogModal]   = useState(false);
-  const [filterMod, setFilterMod] = useState(false);
-  const [layerMod, setLayerMod]   = useState(false);
-  const [filters, setFilters]     = useState({...DEF_FILTERS});
-  const [tileKey, setTileKey]     = useState('osm');
+  const webViewRef      = useRef(null);
+  const hasCenteredRef  = useRef(false);
+  const suggestModeRef  = useRef(false);
+
+  const [pubs, setPubs]                 = useState([]);
+  const [visited, setVisited]           = useState(new Set());
+  const [loc, setLoc]                   = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [mapReady, setMapReady]         = useState(false);
+  const [selPub, setSelPub]             = useState(null);
+  const [showSheet, setShowSheet]       = useState(false);
+  const [showInfo, setShowInfo]         = useState(false);
+  const [logModal, setLogModal]         = useState(false);
+  const [filterMod, setFilterMod]       = useState(false);
+  const [layerMod, setLayerMod]         = useState(false);
+  const [offlineRegionsMod, setOffReg]  = useState(false);
+  const [reportMod, setReportMod]       = useState(false);
+  const [suggestMode, setSuggestMode]   = useState(false);
+  const [suggestCoords, setSuggestCo]   = useState(null);
+  const [suggestModal, setSuggestMod]   = useState(false);
+  const [filters, setFilters]           = useState({...DEF_FILTERS});
+  const [tileKey, setTileKey]           = useState('osm');
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -500,11 +737,20 @@ const MapScreen = ({ user }) => {
 
   const loadData = async () => {
     try {
-      const [pd,vd] = await Promise.all([
-        cached('pubs',()=>apiFetch('/pubs'),10*60*1000),
-        cached(`v_${user.id}`,()=>apiFetch('/visits/my'),TTL),
-      ]);
-      setPubs(pd); setVisited(new Set(vd.map(v=>v.pub_id)));
+      const offPubs = await getOfflinePubs();
+      const vd = await cached(`v_${user.id}`,()=>apiFetch('/visits/my'),TTL).catch(async()=>{
+        const raw=await AsyncStorage.getItem(`c_v_${user.id}`);
+        return raw?(JSON.parse(raw).data||[]):[];
+      });
+      if (offPubs.length === 0) {
+        Alert.alert(
+          'Nejsou žádné hospůdky',
+          'Stáhni si oblast v offline správci (tlačítko 📥 na mapě), abys mohl(a) hrát.',
+          [{text:'OK'}]
+        );
+      }
+      setPubs(offPubs);
+      setVisited(new Set(vd.map(v=>v.pub_id)));
     } catch(e){console.error(e);}
     finally{setLoading(false);}
   };
@@ -536,9 +782,10 @@ const MapScreen = ({ user }) => {
     sendToWebView({type:'pubs',pubs:data});
   },[mapReady,filtered,visited]);
 
-  // Fly to user location once map and loc are both ready
+  // Fly to user location ONLY ONCE when map and loc are both ready
   useEffect(()=>{
-    if(!mapReady||!loc)return;
+    if(!mapReady||!loc||hasCenteredRef.current)return;
+    hasCenteredRef.current = true;
     sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
   },[mapReady,loc]);
 
@@ -546,7 +793,20 @@ const MapScreen = ({ user }) => {
     const msg=JSON.parse(e.nativeEvent.data);
     if(msg.type==='ready'){setMapReady(true);}
     else if(msg.type==='pubTap'){const pub=pubs.find(p=>p.id===msg.id);if(pub)openPub(pub);}
+    else if(msg.type==='mapClick'){
+      if(suggestModeRef.current){
+        setSuggestCo({lat:msg.lat,lng:msg.lng});
+        setSuggestMod(true);
+        suggestModeRef.current=false;
+        setSuggestMode(false);
+      }
+    }
   };
+
+  const selPubDist = useMemo(()=>{
+    if(!loc||!selPub)return null;
+    return Math.round(hav(loc.latitude,loc.longitude,selPub.latitude,selPub.longitude));
+  },[loc,selPub]);
 
   const openPub = pub => {
     setSelPub(pub); setShowSheet(true);
@@ -612,7 +872,28 @@ const MapScreen = ({ user }) => {
         <TouchableOpacity style={s.mapBtn} onPress={()=>setLayerMod(true)}>
           <Ionicons name="layers-outline" size={22} color={C.creamDim}/>
         </TouchableOpacity>
+        <TouchableOpacity style={s.mapBtn} onPress={()=>setOffReg(true)}>
+          <Ionicons name="download-outline" size={22} color={C.creamDim}/>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.mapBtn,suggestMode&&{borderColor:C.amber,borderWidth:2}]}
+          onPress={()=>{
+            const next=!suggestModeRef.current;
+            suggestModeRef.current=next;
+            setSuggestMode(next);
+          }}>
+          <Ionicons name="add-outline" size={24} color={suggestMode?C.amber:C.creamDim}/>
+        </TouchableOpacity>
       </View>
+
+      {suggestMode&&(
+        <View style={s.suggestHint}>
+          <Ionicons name="location-outline" size={15} color={C.amber}/>
+          <Text style={{color:C.amber,fontSize:12,fontWeight:'700',flex:1}}>Klepni na mapu pro umístění návrhu</Text>
+          <TouchableOpacity onPress={()=>{suggestModeRef.current=false;setSuggestMode(false);}}>
+            <Ionicons name="close-circle" size={16} color={C.creamDim}/>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Bottom sheet */}
       {showSheet&&selPub&&(
@@ -645,19 +926,27 @@ const MapScreen = ({ user }) => {
               <Text style={s.dimText}>{selPub.opening_hours}</Text>
             </View>
           )}
-          <View style={{flexDirection:'row',gap:10,marginTop:10}}>
-            {visited.has(selPub.id)?(
+          <View style={{flexDirection:'row',gap:8,marginTop:10}}>
+            {visited.has(selPub.id) ? (
               <View style={[s.btnOk,{flex:1}]}>
                 <Ionicons name="checkmark-circle-outline" size={18} color={C.green}/>
                 <Text style={[s.btnPriT,{color:C.green}]}>Odkliknuto</Text>
               </View>
-            ):(
-              <TouchableOpacity style={[s.btnPri,{flex:1}]} onPress={()=>tryLog(selPub)}>
+            ) : selPubDist===null||selPubDist>25 ? (
+              <View style={[s.btnDis,{flex:1}]}>
+                <Ionicons name="walk-outline" size={17} color={C.creamDim}/>
+                <Text style={s.btnDisT}>{selPubDist!==null?`${selPubDist} m do odkliku`:'Zapni GPS'}</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={[s.btnPri,{flex:1}]} onPress={()=>setLogModal(true)}>
                 <Ionicons name="checkmark-done-outline" size={18} color={C.bg}/>
                 <Text style={s.btnPriT}>Odkliknout</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={[s.btnSec,{paddingHorizontal:18}]} onPress={()=>setShowInfo(true)}>
+            <TouchableOpacity style={[s.btnSec,{paddingHorizontal:12}]} onPress={()=>setReportMod(true)}>
+              <Ionicons name="flag-outline" size={20} color={C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnSec,{paddingHorizontal:12}]} onPress={()=>setShowInfo(true)}>
               <Ionicons name="information-circle-outline" size={22} color={C.amber}/>
             </TouchableOpacity>
           </View>
@@ -665,6 +954,7 @@ const MapScreen = ({ user }) => {
       )}
 
       {showInfo&&selPub&&<PubDetailModal pub={selPub} onClose={()=>setShowInfo(false)}/>}
+      {reportMod&&selPub&&<ReportPubModal pub={selPub} onClose={()=>setReportMod(false)}/>}
       {logModal&&selPub&&(
         <LogModal pub={selPub} user={user} onClose={()=>setLogModal(false)}
           onSuccess={()=>{
@@ -674,6 +964,8 @@ const MapScreen = ({ user }) => {
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
       {layerMod&&<LayerModal curKey={tileKey} onSelect={applyLayer} onClose={()=>setLayerMod(false)}/>}
+      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={loadData}/>}
+      {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
     </View>
   );
 };
@@ -682,15 +974,17 @@ const MapScreen = ({ user }) => {
 // LOG MODAL
 // ══════════════════════════════════════════════════════════════════════════════
 const LogModal = ({ pub, user, onClose, onSuccess }) => {
-  const [step, setStep]       = useState('question');
-  const [q, setQ]             = useState(null);
-  const [ans, setAns]         = useState(null);
-  const [rating, setRating]   = useState(0);
-  const [note, setNote]       = useState('');
-  const [photos, setPhotos]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy]       = useState(false);
-  const [online, setOnline]   = useState(true);
+  const [step, setStep]         = useState('question');
+  const [q, setQ]               = useState(null);
+  const [ans, setAns]           = useState(null);
+  const [rating, setRating]     = useState(0);
+  const [note, setNote]         = useState('');
+  const [noteViz, setNoteViz]   = useState('public');
+  const [photos, setPhotos]     = useState([]);
+  const [photosViz, setPhotosViz] = useState('public');
+  const [loading, setLoading]   = useState(true);
+  const [busy, setBusy]         = useState(false);
+  const [online, setOnline]     = useState(true);
 
   useEffect(()=>{
     apiFetch(`/pubs/${pub.id}/question`).then(setQ).catch(()=>setQ(null)).finally(()=>setLoading(false));
@@ -708,7 +1002,7 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
     if(q&&!ans){Alert.alert('Odpověz na otázku!');return;}
     if(rating===0){Alert.alert('Dej hodnocení!');return;}
     setBusy(true);
-    const payload={pub_id:pub.id,answer_id:ans,rating,note,logged_at:new Date().toISOString()};
+    const payload={pub_id:pub.id,answer_id:ans,rating,note,note_visibility:noteViz,photo_visibility:photosViz,logged_at:new Date().toISOString()};
     try{
       if(online){
         await apiFetch('/visits',{method:'POST',body:JSON.stringify(payload)});
@@ -764,6 +1058,13 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
                     <TextInput style={[s.input,{minHeight:70,textAlignVertical:'top'}]}
                       placeholder="Jak ses měl(a)?" placeholderTextColor={C.creamDim}
                       value={note} onChangeText={setNote} multiline/>
+                    <View style={{flexDirection:'row',gap:8,marginBottom:14}}>
+                      {[['public','👁 Veřejná'],['private','🔒 Soukromá']].map(([v,l])=>(
+                        <TouchableOpacity key={v} style={[s.fChip,{flex:1,justifyContent:'center'},noteViz===v&&s.fChipOn]} onPress={()=>setNoteViz(v)}>
+                          <Text style={[s.fChipT,noteViz===v&&s.fChipTOn]}>{l}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                     <Text style={s.secLabel}>Fotky (volitelné)</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       {photos.map((uri,i)=>(
@@ -778,6 +1079,13 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
                         <Ionicons name="camera-outline" size={24} color={C.amber}/>
                       </TouchableOpacity>
                     </ScrollView>
+                    <View style={{flexDirection:'row',gap:8,marginTop:10,marginBottom:4}}>
+                      {[['public','👁 Fotky veřejné'],['private','🔒 Fotky soukromé']].map(([v,l])=>(
+                        <TouchableOpacity key={v} style={[s.fChip,{flex:1,justifyContent:'center'},photosViz===v&&s.fChipOn]} onPress={()=>setPhotosViz(v)}>
+                          <Text style={[s.fChipT,photosViz===v&&s.fChipTOn]}>{l}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                     <TouchableOpacity style={[s.btnPri,{marginTop:16}]} onPress={submit} disabled={busy}>
                       {busy?<ActivityIndicator color={C.bg}/>:<>
                         <Ionicons name="checkmark-done-outline" size={18} color={C.bg}/>
@@ -966,7 +1274,8 @@ const ChallengesScreen = ({ user }) => {
     setLoading(false);
   };
   const renderItem = ({item})=>{
-    const pct=Math.min(1,item.progress/item.target), done=pct>=1;
+    const displayProgress = Math.min(item.progress, item.target);
+    const pct=displayProgress/item.target, done=pct>=1;
     return(
       <View style={[s.chCard,done&&{borderColor:C.green}]}>
         <View style={{flexDirection:'row',alignItems:'flex-start',gap:10,marginBottom:10}}>
@@ -980,7 +1289,7 @@ const ChallengesScreen = ({ user }) => {
           {done&&<Ionicons name="checkmark-circle" size={22} color={C.green}/>}
         </View>
         <View style={s.progTrack}><View style={[s.progBar,{width:`${pct*100}%`,backgroundColor:done?C.green:C.amber}]}/></View>
-        <Text style={s.dimText}>{item.progress} / {item.target}{item.reward?` · ${item.reward}`:''}</Text>
+        <Text style={s.dimText}>{displayProgress} / {item.target}{item.reward?` · ${item.reward}`:''}</Text>
       </View>
     );
   };
@@ -1182,7 +1491,6 @@ const FindUserTab = ({ user }) => {
   );
 };
 
-// Gallery sub-tab
 const GalleryTab = () => {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1204,6 +1512,18 @@ const GalleryTab = () => {
 
   const loadMore = ()=>{ if(!hasMore)return; const p=page+1; setPage(p); load(p); };
 
+  const likePhoto = async (photoId) => {
+    setPhotos(prev=>prev.map(p=>p.id===photoId
+      ? {...p, liked:!p.liked, like_count:(p.like_count||0)+(p.liked?-1:1)}
+      : p
+    ));
+    try { await apiFetch(`/community/gallery/${photoId}/like`,{method:'POST'}); }
+    catch { setPhotos(prev=>prev.map(p=>p.id===photoId
+      ? {...p, liked:!p.liked, like_count:(p.like_count||0)+(p.liked?1:-1)}
+      : p
+    ));}
+  };
+
   if(loading)return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
   const COLS=3, SIZE=(SW-32-8*2)/3;
   return(
@@ -1215,9 +1535,15 @@ const GalleryTab = () => {
           onRefresh={()=>{setRefr(true);setPage(1);load(1,true);}}/>}
         onEndReached={loadMore} onEndReachedThreshold={0.4}
         renderItem={({item,index})=>(
-          <TouchableOpacity onPress={()=>setPv(index)} activeOpacity={0.85} style={{marginBottom:4}}>
-            <Image source={{uri:item.url}} style={{width:SIZE,height:SIZE,borderRadius:6}} resizeMode="cover"/>
-          </TouchableOpacity>
+          <View style={{position:'relative',marginBottom:4}}>
+            <TouchableOpacity onPress={()=>setPv(index)} activeOpacity={0.85}>
+              <Image source={{uri:item.url}} style={{width:SIZE,height:SIZE,borderRadius:6}} resizeMode="cover"/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.photoLikeBtn} onPress={()=>likePhoto(item.id)}>
+              <Ionicons name={item.liked?'heart':'heart-outline'} size={14} color={item.liked?C.red:C.white}/>
+              {(item.like_count||0)>0 && <Text style={s.photoLikeT}>{item.like_count}</Text>}
+            </TouchableOpacity>
+          </View>
         )}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="images-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádné fotky</Text></View>}
       />
@@ -1439,7 +1765,7 @@ const ProfileScreen = ({ user, onLogout }) => {
           <Text style={{fontSize:15,fontWeight:'600',color:C.red}}>Odhlásit se</Text>
         </TouchableOpacity>
       </View>
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',paddingBottom:10}}>Hospůdkobraní v1.2</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',paddingBottom:10}}>Hospůdkobraní v1.2.1</Text>
 
       {pv!==null&&photos.length>0&&<PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)}/>}
     </ScrollView>
@@ -1485,9 +1811,19 @@ export default function App() {
       try{
         const [tk,ud]=await Promise.all([AsyncStorage.getItem('auth_token'),AsyncStorage.getItem('user_data')]);
         if(tk&&ud){
-          setUser(JSON.parse(ud));
-          apiFetch('/auth/me').then(u=>{setUser(u);AsyncStorage.setItem('user_data',JSON.stringify(u));})
-            .catch(()=>{AsyncStorage.multiRemove(['auth_token','user_data']);setUser(null);});
+          setUser(JSON.parse(ud)); // Ihned použij lokálně uložená data
+          // Pokus o obnovu ze serveru – pokud offline, ponech přihlášeného
+          apiFetch('/auth/me')
+            .then(u=>{ setUser(u); AsyncStorage.setItem('user_data',JSON.stringify(u)); })
+            .catch(async()=>{
+              const net=await NetInfo.fetch();
+              if(net.isConnected){
+                // Online, ale token je neplatný → odhlásit
+                await AsyncStorage.multiRemove(['auth_token','user_data']);
+                setUser(null);
+              }
+              // Offline → ponechat přihlášeného s lokálními daty
+            });
         }
       }catch{}
       setBoot(false);
@@ -1681,4 +2017,22 @@ const s = StyleSheet.create({
   tabItem:  {flex:1,alignItems:'center',position:'relative',paddingVertical:4},
   tabLabel: {fontSize:9,marginTop:3,fontWeight:'600'},
   tabDot:   {position:'absolute',bottom:-2,width:4,height:4,borderRadius:2,backgroundColor:C.amber},
+
+  // Disabled odkliknutí
+  btnDis:   {borderWidth:1,borderColor:'#444',borderRadius:14,paddingVertical:13,alignItems:'center',flexDirection:'row',justifyContent:'center',gap:8,backgroundColor:'#1A1A1A'},
+  btnDisT:  {color:'#777',fontWeight:'700',fontSize:14},
+
+  // Offline oblasti
+  areaRow:  {flexDirection:'row',alignItems:'center',gap:10,paddingVertical:12,borderBottomWidth:1,borderBottomColor:C.border},
+  areaFlag: {fontSize:26},
+  areaName: {color:C.cream,fontWeight:'700',fontSize:15},
+  areaDlBtn:{backgroundColor:C.amber,borderRadius:10,paddingHorizontal:12,paddingVertical:7,flexDirection:'row',alignItems:'center',gap:5},
+  areaDlT:  {color:C.bg,fontSize:12,fontWeight:'800'},
+
+  // Suggest mode hint
+  suggestHint:{position:'absolute',top:54,left:70,right:70,backgroundColor:'rgba(15,10,0,0.94)',borderRadius:12,padding:10,flexDirection:'row',alignItems:'center',gap:8,borderWidth:1,borderColor:C.amber},
+
+  // Gallery likes
+  photoLikeBtn:{position:'absolute',bottom:4,right:4,backgroundColor:'rgba(0,0,0,0.55)',borderRadius:12,paddingHorizontal:5,paddingVertical:3,flexDirection:'row',alignItems:'center',gap:3},
+  photoLikeT:  {color:C.white,fontSize:10,fontWeight:'700'},
 });
