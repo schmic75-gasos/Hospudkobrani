@@ -1,15 +1,13 @@
 /**
- * Hospůdkobraní – App.js v1.2.1
- * Změny: offline hospůdky + stahování oblastí, návrhy nových hospůdek, nahlašování chyb,
- *        distance-based Odkliknout tlačítko, oprava vracení mapy, offline login fix,
- *        viditelnost poznámek a fotek, lajky fotek v galerii, oprava výzev (cap na target)
+ * Hospůdkobraní – App.js v1.3.0
+ * Nové funkce: mock detekce, verze datasetů, notifikace, lajky všude, alert pro oblast
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Image, ActivityIndicator, FlatList, Dimensions,
   Platform, StatusBar, Animated, KeyboardAvoidingView, RefreshControl,
-  Linking, SafeAreaView,
+  Linking, SafeAreaView, AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -18,6 +16,9 @@ import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
+import * as BackgroundFetch from 'expo-background-fetch';
+import * as TaskManager from 'expo-task-manager';
+import * as Notifications from 'expo-notifications';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://fluffini.cz/api';
@@ -94,11 +95,15 @@ const MAP_HTML = `<!DOCTYPE html>
       map.removeLayer(active);
       var cfg=LAYERS[msg.key];
       if(cfg){active=new CachedLayer(cfg.url,{attribution:cfg.attr,maxZoom:19});active.addTo(map);}
+    }else if(msg.type==='getCenter'){
+      var center=map.getCenter();
+      postRN({type:'centerChanged',lat:center.lat,lng:center.lng});
     }
   }
   document.addEventListener('message',handle);
   window.addEventListener('message',handle);
   map.on('click',function(e){postRN({type:'mapClick',lat:e.latlng.lat,lng:e.latlng.lng});});
+  map.on('moveend',function(){var c=map.getCenter();postRN({type:'centerChanged',lat:c.lat,lng:c.lng});});
   window.onload=function(){postRN({type:'ready'});};
 <\/script></body></html>`;
 
@@ -128,12 +133,12 @@ const bust = k => { delete mem[k]; AsyncStorage.removeItem(`c_${k}`).catch(()=>{
 
 // ─── OFFLINE OBLASTI (státy) ──────────────────────────────────────────────────
 const COUNTRIES = [
-  { code:'CZ', name:'Česká republika', flag:'🇨🇿' },
-  { code:'SK', name:'Slovensko',        flag:'🇸🇰' },
-  { code:'AT', name:'Rakousko',         flag:'🇦🇹' },
-  { code:'DE', name:'Německo',          flag:'🇩🇪' },
-  { code:'PL', name:'Polsko',           flag:'🇵🇱' },
-  { code:'HU', name:'Maďarsko',         flag:'🇭🇺' },
+  { code:'CZ', name:'Česká republika', flag:'🇨🇿', bounds: { minLat:48.5, maxLat:51.1, minLng:12.0, maxLng:18.9 } },
+  { code:'SK', name:'Slovensko',        flag:'🇸🇰', bounds: { minLat:47.7, maxLat:49.6, minLng:16.8, maxLng:22.6 } },
+  { code:'AT', name:'Rakousko',         flag:'🇦🇹', bounds: { minLat:46.3, maxLat:49.0, minLng:9.5, maxLng:17.2 } },
+  { code:'DE', name:'Německo',          flag:'🇩🇪', bounds: { minLat:47.2, maxLat:55.1, minLng:5.9, maxLng:15.0 } },
+  { code:'PL', name:'Polsko',           flag:'🇵🇱', bounds: { minLat:49.0, maxLat:54.9, minLng:14.1, maxLng:24.2 } },
+  { code:'HU', name:'Maďarsko',         flag:'🇭🇺', bounds: { minLat:45.7, maxLat:48.6, minLng:16.1, maxLng:22.9 } },
 ];
 const getOfflinePubs   = async () => { const r=await AsyncStorage.getItem('offline_pubs');   return r?JSON.parse(r):[]; };
 const getOfflineAreas  = async () => { const r=await AsyncStorage.getItem('offline_areas');  return r?JSON.parse(r):[]; };
@@ -151,6 +156,53 @@ const hav = (a,b,c,d) => {
   const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dO/2)**2;
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 };
+
+// ─── NOTIFIKACE ───────────────────────────────────────────────────────────────
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
+});
+
+async function scheduleLocalNotification(title, body) {
+  await Notifications.scheduleNotificationAsync({
+    content: { title, body },
+    trigger: null,
+  });
+}
+
+// ─── BACKGROUND TASK PRO VERZI DATASETU ───────────────────────────────────────
+const DATASET_CHECK_TASK = 'DATASET_CHECK';
+
+TaskManager.defineTask(DATASET_CHECK_TASK, async () => {
+  try {
+    const offlineAreas = await getOfflineAreas();
+    for (const code of offlineAreas) {
+      const lastVersion = await AsyncStorage.getItem(`version_${code}`);
+      if (!lastVersion) continue;
+      const res = await fetch(`${API}/pubs/version`);
+      if (!res.ok) continue;
+      const { version } = await res.json();
+      if (lastVersion !== version) {
+        await scheduleLocalNotification(
+          'Aktualizace hospůdek',
+          `Pro oblast ${code} je k dispozici nová verze. Otevřete aplikaci pro stažení.`
+        );
+      }
+    }
+    return BackgroundFetch.Result.NewData;
+  } catch (e) {
+    return BackgroundFetch.Result.Failed;
+  }
+});
+
+async function registerBackgroundFetch() {
+  const status = await BackgroundFetch.getStatusAsync();
+  if (status !== BackgroundFetch.Status.Available) return;
+  await BackgroundFetch.registerTaskAsync(DATASET_CHECK_TASK, {
+    minimumInterval: 5 * 60, // 5 minut
+    stopOnTerminate: false,
+    startOnBoot: true,
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SHARED COMPONENTS
@@ -185,17 +237,47 @@ const Chip = ({ label, color=C.amber, icon }) => (
   </View>
 );
 
-// Fullscreen photo viewer
-const PhotoViewer = ({ photos, startIndex, onClose }) => {
+// Fullscreen photo viewer with likes and author click
+const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
   const [cur, setCur] = useState(startIndex);
+  const [likedState, setLikedState] = useState(photos.map(p => p.liked || false));
+  const [likeCounts, setLikeCounts] = useState(photos.map(p => p.like_count || 0));
+  const [userModal, setUserModal] = useState(null);
   const fa = useRef(new Animated.Value(0)).current;
+
   useEffect(()=>{ Animated.timing(fa,{toValue:1,duration:200,useNativeDriver:true}).start(); },[]);
   const close = ()=>{ Animated.timing(fa,{toValue:0,duration:150,useNativeDriver:true}).start(onClose); };
+
+  const handleLike = async () => {
+    const photo = photos[cur];
+    const newLiked = !likedState[cur];
+    setLikedState(prev => { const n=[...prev]; n[cur]=newLiked; return n; });
+    setLikeCounts(prev => { const n=[...prev]; n[cur]=prev[cur] + (newLiked ? 1 : -1); return n; });
+    try {
+      const res = await apiFetch(`/community/gallery/${photo.id}/like`, { method: 'POST' });
+      if (onLikeUpdate) onLikeUpdate(photo.id, res.liked, res.like_count);
+    } catch (e) {
+      // revert
+      setLikedState(prev => { const n=[...prev]; n[cur]=!newLiked; return n; });
+      setLikeCounts(prev => { const n=[...prev]; n[cur]=prev[cur] + (newLiked ? -1 : 1); return n; });
+    }
+  };
+
   return (
     <Modal visible animationType="none" transparent statusBarTranslucent>
       <Animated.View style={[s.pvBg,{opacity:fa}]}>
         <Image source={{uri:photos[cur].url}} style={s.pvImg} resizeMode="contain" />
-        <Text style={s.pvAuthor}>{photos[cur].username||''}</Text>
+        <View style={s.pvFooter}>
+          <TouchableOpacity onPress={() => setUserModal(photos[cur].username)}>
+            <Text style={s.pvAuthor}>{photos[cur].username}</Text>
+          </TouchableOpacity>
+          <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
+            <TouchableOpacity onPress={handleLike}>
+              <Ionicons name={likedState[cur] ? 'heart' : 'heart-outline'} size={24} color={likedState[cur] ? C.red : C.white} />
+            </TouchableOpacity>
+            <Text style={s.pvLikeCount}>{likeCounts[cur]}</Text>
+          </View>
+        </View>
         {photos.length>1 && (
           <View style={s.pvNav}>
             <TouchableOpacity style={[s.pvBtn,cur===0&&s.pvBtnOff]} onPress={()=>cur>0&&setCur(c=>c-1)}>
@@ -211,11 +293,12 @@ const PhotoViewer = ({ photos, startIndex, onClose }) => {
           <Ionicons name="close" size={26} color={C.white} />
         </TouchableOpacity>
       </Animated.View>
+      {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={()=>setUserModal(null)} />}
     </Modal>
   );
 };
 
-// User profile modal (fullscreen avatar support for foreign users)
+// User profile modal
 const UserProfileModal = ({ username, selfId, onClose }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -255,16 +338,16 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
         </View>
       </View>
       {bigAvatar && profile?.avatar_url && (
-        <PhotoViewer photos={[{url:profile.avatar_url,username:profile.username}]} startIndex={0} onClose={()=>setBigAvatar(false)} />
+        <PhotoViewer photos={[{url:profile.avatar_url,username:profile.username,id:null,liked:false,like_count:0}]} startIndex={0} onClose={()=>setBigAvatar(false)} userId={selfId} />
       )}
     </Modal>
   );
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PUB DETAIL MODAL
+// PUB DETAIL MODAL (with likes on photos)
 // ══════════════════════════════════════════════════════════════════════════════
-const PubDetailModal = ({ pub, onClose }) => {
+const PubDetailModal = ({ pub, onClose, userId }) => {
   const [reviews, setReviews] = useState([]);
   const [photos, setPhotos]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -278,6 +361,10 @@ const PubDetailModal = ({ pub, onClose }) => {
       apiFetch(`/pubs/${pub.id}/photos`).catch(()=>[]),
     ]).then(([r,p])=>{ setReviews(r); setPhotos(p); setLoading(false); });
   },[pub.id]);
+
+  const handleLikeUpdate = (photoId, liked, likeCount) => {
+    setPhotos(prev => prev.map(p => p.id === photoId ? {...p, liked, like_count: likeCount} : p));
+  };
 
   return (
     <Modal visible animationType="slide" transparent>
@@ -342,10 +429,21 @@ const PubDetailModal = ({ pub, onClose }) => {
                     <Text style={s.secLabel}>Fotky ({photos.length})</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                       {photos.map((p,i)=>(
-                        <TouchableOpacity key={i} onPress={()=>setPv(i)} activeOpacity={0.85} style={{position:'relative'}}>
-                          <Image source={{uri:p.url}} style={{width:120,height:90,borderRadius:10,marginRight:8}} resizeMode="cover"/>
-                          <View style={s.expandOverlay}><Ionicons name="expand-outline" size={14} color={C.white}/></View>
-                        </TouchableOpacity>
+                        <View key={i} style={{position:'relative',marginRight:8}}>
+                          <TouchableOpacity onPress={()=>setPv(i)} activeOpacity={0.85}>
+                            <Image source={{uri:p.url}} style={{width:120,height:90,borderRadius:10}} resizeMode="cover"/>
+                            <View style={s.expandOverlay}><Ionicons name="expand-outline" size={14} color={C.white}/></View>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={s.photoLikeBtnMini} onPress={async()=>{
+                            const newLiked = !p.liked;
+                            setPhotos(prev => prev.map(ph => ph.id === p.id ? {...ph, liked:newLiked, like_count: (ph.like_count||0)+(newLiked?1:-1)} : ph));
+                            try { await apiFetch(`/community/gallery/${p.id}/like`, { method:'POST' }); }
+                            catch(e){ setPhotos(prev => prev.map(ph => ph.id === p.id ? {...ph, liked:!newLiked, like_count: (ph.like_count||0)+(newLiked?-1:1)} : ph)); }
+                          }}>
+                            <Ionicons name={p.liked?'heart':'heart-outline'} size={12} color={p.liked?C.red:C.white}/>
+                            <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count||0}</Text>
+                          </TouchableOpacity>
+                        </View>
                       ))}
                     </ScrollView>
                   </View>
@@ -375,8 +473,8 @@ const PubDetailModal = ({ pub, onClose }) => {
           </ScrollView>
         </View>
       </View>
-      {pv!==null && <PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)}/>}
-      {userModal && <UserProfileModal username={userModal} selfId={null} onClose={()=>setUserModal(null)}/>}
+      {pv!==null && <PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)} userId={userId} onLikeUpdate={handleLikeUpdate} />}
+      {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={()=>setUserModal(null)}/>}
       {reportMod && <ReportPubModal pub={pub} onClose={()=>setReportMod(false)}/>}
     </Modal>
   );
@@ -450,12 +548,13 @@ const FilterModal = ({ filters, onApply, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// OFFLINE OBLASTI MODAL
+// OFFLINE OBLASTI MODAL (with dataset version check)
 // ══════════════════════════════════════════════════════════════════════════════
-const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
+const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
   const [areas, setAreas]         = useState([]);
   const [downloading, setDl]      = useState(null);
   const [pubCounts, setPubCounts] = useState({});
+  const [versions, setVersions]   = useState({});
 
   useEffect(()=>{ loadAreas(); },[]);
 
@@ -465,6 +564,13 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
     const cnt = {};
     pubs.forEach(p=>{ if(p.country){ cnt[p.country]=(cnt[p.country]||0)+1; } });
     setPubCounts(cnt);
+    // načíst verze
+    const vers = {};
+    for (const code of a) {
+      const v = await AsyncStorage.getItem(`version_${code}`);
+      if (v) vers[code] = v;
+    }
+    setVersions(vers);
   };
 
   const download = async (country) => {
@@ -477,11 +583,56 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
       await saveOfflinePubs(merged);
       const existing2 = await getOfflineAreas();
       if (!existing2.includes(country.code)) await saveOfflineAreas([...existing2, country.code]);
+      // uložit verzi
+      const verRes = await apiFetch('/pubs/version');
+      await AsyncStorage.setItem(`version_${country.code}`, verRes.version);
       setAreas(a => [...new Set([...a, country.code])]);
       setPubCounts(c=>({...c,[country.code]:fresh.length}));
       Alert.alert('Staženo ✓', `${country.name}: ${fresh.length} hospůdek uloženo offline.`);
       onAreaDownloaded?.();
     } catch(e) { Alert.alert('Chyba stahování', e.message); }
+    setDl(null);
+  };
+
+  const checkForUpdates = async (code) => {
+    const lastVer = await AsyncStorage.getItem(`version_${code}`);
+    if (!lastVer) return;
+    try {
+      const serverVer = await apiFetch('/pubs/version');
+      if (lastVer !== serverVer.version) {
+        Alert.alert(
+          'Aktualizace dostupná',
+          `Pro ${code} je nová verze. Stáhnout nyní?`,
+          [
+            { text: 'Později', style: 'cancel' },
+            { text: 'Stáhnout', onPress: () => downloadUpdates(code, lastVer) }
+          ]
+        );
+      } else {
+        Alert.alert('Aktuální', 'Máš nejnovější verzi hospůdek.');
+      }
+    } catch(e) { Alert.alert('Chyba', e.message); }
+  };
+
+  const downloadUpdates = async (code, since) => {
+    setDl(code);
+    try {
+      const updates = await apiFetch(`/pubs/updates?since=${encodeURIComponent(since)}`);
+      const existing = await getOfflinePubs();
+      const newPubs = existing.map(p => {
+        const upd = updates.find(u => u.id === p.id);
+        return upd ? {...p, ...upd} : p;
+      });
+      const newIds = new Set(updates.map(u => u.id));
+      const added = updates.filter(u => !existing.some(e => e.id === u.id));
+      const merged = [...newPubs, ...added];
+      await saveOfflinePubs(merged);
+      const verRes = await apiFetch('/pubs/version');
+      await AsyncStorage.setItem(`version_${code}`, verRes.version);
+      setPubCounts(c=>({...c,[code]:merged.filter(p=>p.country===code).length}));
+      Alert.alert('Aktualizováno', `Staženo ${updates.length} změn.`);
+      onAreaDownloaded?.();
+    } catch(e) { Alert.alert('Chyba', e.message); }
     setDl(null);
   };
 
@@ -496,6 +647,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
         await saveOfflineAreas(newAreas);
         setAreas(newAreas);
         setPubCounts(c=>{ const n={...c}; delete n[code]; return n; });
+        await AsyncStorage.removeItem(`version_${code}`);
         onAreaDownloaded?.();
       }},
     ]);
@@ -515,6 +667,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
               const downloaded = areas.includes(c.code);
               const isDown     = downloading===c.code;
               const count      = pubCounts[c.code];
+              const hasUpdate  = downloaded && versions[c.code] && (()=>{ /* dummy, kontrola až po kliknutí */ return false; })();
               return (
                 <View key={c.code} style={s.areaRow}>
                   <Text style={s.areaFlag}>{c.flag}</Text>
@@ -524,8 +677,8 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded }) => {
                   </View>
                   {downloaded ? (
                     <View style={{flexDirection:'row',gap:8}}>
-                      <TouchableOpacity style={s.areaDlBtn} onPress={()=>download(c)} disabled={!!downloading}>
-                        {isDown?<ActivityIndicator size="small" color={C.bg}/>:<Ionicons name="refresh-outline" size={15} color={C.bg}/>}
+                      <TouchableOpacity style={s.areaDlBtn} onPress={()=>checkForUpdates(c.code)} disabled={!!downloading}>
+                        <Ionicons name="refresh-outline" size={15} color={C.bg}/>
                       </TouchableOpacity>
                       <TouchableOpacity style={[s.areaDlBtn,{backgroundColor:'#3A0000'}]} onPress={()=>remove(c.code)}>
                         <Ionicons name="trash-outline" size={15} color={C.red}/>
@@ -710,6 +863,9 @@ const MapScreen = ({ user }) => {
   const [suggestModal, setSuggestMod]   = useState(false);
   const [filters, setFilters]           = useState({...DEF_FILTERS});
   const [tileKey, setTileKey]           = useState('osm');
+  const [mockBlocked, setMockBlocked]   = useState(false);
+  const [showAreaWarning, setShowAreaWarning] = useState(false);
+  const [currentAreaName, setCurrentAreaName] = useState('');
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -722,7 +878,7 @@ const MapScreen = ({ user }) => {
     return n;
   },[filters]);
 
-  useEffect(()=>{loadData();setupLoc();loadPrefs();},[]);
+  useEffect(()=>{loadData();setupLoc();loadPrefs();registerBackgroundFetch();},[]);
 
   const loadPrefs = async () => {
     const tk = await AsyncStorage.getItem('tk');
@@ -757,13 +913,27 @@ const MapScreen = ({ user }) => {
 
   const setupLoc = async () => {
     const {status} = await Location.requestForegroundPermissionsAsync();
-    if(status!=='granted')return;
-    const l = await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.High});
+    if(status !== 'granted') return;
+    const l = await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.High});
+    // Detekce mock polohy
+    if (l.mocked) {
+      if (user.is_admin) {
+        Alert.alert('Mock poloha', 'Mock poloha je zapnutá. Pro testovací účely OK.');
+      } else {
+        setMockBlocked(true);
+        return;
+      }
+    }
     setLoc(l.coords);
-    Location.watchPositionAsync({accuracy:Location.Accuracy.High,distanceInterval:5},ll=>setLoc(ll.coords));
+    Location.watchPositionAsync({accuracy:Location.Accuracy.High,distanceInterval:5}, ll => {
+      if (ll.mocked && !user.is_admin) {
+        setMockBlocked(true);
+      } else {
+        setLoc(ll.coords);
+      }
+    });
   };
 
-  // filtered MUSÍ být deklarováno před useEffect co jej používá v dep array
   const filtered = useMemo(()=>pubs.filter(p=>{
     if(filters.visited==='visited'  &&!visited.has(p.id))return false;
     if(filters.visited==='unvisited'&& visited.has(p.id))return false;
@@ -775,14 +945,12 @@ const MapScreen = ({ user }) => {
     return true;
   }),[pubs,visited,filters]);
 
-  // Sync markers whenever filtered pubs or visited set changes
   useEffect(()=>{
     if(!mapReady||pubs.length===0)return;
     const data=filtered.map(p=>({id:p.id,lat:p.latitude,lng:p.longitude,v:visited.has(p.id)}));
     sendToWebView({type:'pubs',pubs:data});
   },[mapReady,filtered,visited]);
 
-  // Fly to user location ONLY ONCE when map and loc are both ready
   useEffect(()=>{
     if(!mapReady||!loc||hasCenteredRef.current)return;
     hasCenteredRef.current = true;
@@ -800,6 +968,27 @@ const MapScreen = ({ user }) => {
         suggestModeRef.current=false;
         setSuggestMode(false);
       }
+    }
+    else if(msg.type==='centerChanged'){
+      // Kontrola, zda je střed v některé stažené oblasti
+      const checkArea = async () => {
+        const offlineAreas = await getOfflineAreas();
+        let found = false;
+        let areaName = '';
+        for (const code of offlineAreas) {
+          const country = COUNTRIES.find(c => c.code === code);
+          if (country && msg.lat >= country.bounds.minLat && msg.lat <= country.bounds.maxLat &&
+              msg.lng >= country.bounds.minLng && msg.lng <= country.bounds.maxLng) {
+            found = true;
+            areaName = country.name;
+            break;
+          }
+        }
+        setShowAreaWarning(!found);
+        if (!found) setCurrentAreaName(areaName || 'této oblasti');
+        else setCurrentAreaName('');
+      };
+      checkArea();
     }
   };
 
@@ -830,6 +1019,19 @@ const MapScreen = ({ user }) => {
   };
 
   if(loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
+  if(mockBlocked) return (
+    <View style={s.mockOverlay}>
+      <Ionicons name="warning" size={48} color={C.red} />
+      <Text style={s.mockTitle}>Nepovolená poloha</Text>
+      <Text style={s.mockText}>
+        Používání falešné polohy je proti pravidlům hry.
+        Vypněte prosím mockování polohy a restartujte aplikaci.
+      </Text>
+      <TouchableOpacity style={s.btnPri} onPress={() => {}}>
+        <Text style={s.btnPriT}>Restartovat</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={{flex:1}}>
@@ -895,6 +1097,15 @@ const MapScreen = ({ user }) => {
         </View>
       )}
 
+      {showAreaWarning && (
+        <View style={s.areaWarning}>
+          <Ionicons name="cloud-offline-outline" size={16} color={C.amber} />
+          <Text style={s.areaWarningText}>
+            Nemáš staženou offline oblast pro {currentAreaName || 'tuto oblast'}. Stáhni ji v 📥 menu.
+          </Text>
+        </View>
+      )}
+
       {/* Bottom sheet */}
       {showSheet&&selPub&&(
         <Animated.View style={[s.pubSheet,{transform:[{translateY:slideAnim}]}]}>
@@ -953,7 +1164,7 @@ const MapScreen = ({ user }) => {
         </Animated.View>
       )}
 
-      {showInfo&&selPub&&<PubDetailModal pub={selPub} onClose={()=>setShowInfo(false)}/>}
+      {showInfo&&selPub&&<PubDetailModal pub={selPub} onClose={()=>setShowInfo(false)} userId={user.id} />}
       {reportMod&&selPub&&<ReportPubModal pub={selPub} onClose={()=>setReportMod(false)}/>}
       {logModal&&selPub&&(
         <LogModal pub={selPub} user={user} onClose={()=>setLogModal(false)}
@@ -964,14 +1175,14 @@ const MapScreen = ({ user }) => {
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
       {layerMod&&<LayerModal curKey={tileKey} onSelect={applyLayer} onClose={()=>setLayerMod(false)}/>}
-      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={loadData}/>}
+      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={loadData} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
     </View>
   );
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LOG MODAL
+// LOG MODAL (with challenge unlock notifications)
 // ══════════════════════════════════════════════════════════════════════════════
 const LogModal = ({ pub, user, onClose, onSuccess }) => {
   const [step, setStep]         = useState('question');
@@ -1004,8 +1215,9 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
     setBusy(true);
     const payload={pub_id:pub.id,answer_id:ans,rating,note,note_visibility:noteViz,photo_visibility:photosViz,logged_at:new Date().toISOString()};
     try{
+      let response;
       if(online){
-        await apiFetch('/visits',{method:'POST',body:JSON.stringify(payload)});
+        response = await apiFetch('/visits',{method:'POST',body:JSON.stringify(payload)});
         for(const uri of photos){
           const fd=new FormData();
           fd.append('photo',{uri,name:'photo.jpg',type:'image/jpeg'});
@@ -1015,6 +1227,14 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
       }else{
         await pushQ({type:'visit',payload,photos});
         Alert.alert('Offline','Odkliknutí uloženo lokálně.');
+        onSuccess();
+        return;
+      }
+      // Notifikace o nově splněných výzvách
+      if (response.new_challenges && response.new_challenges.length) {
+        for (const ch of response.new_challenges) {
+          await scheduleLocalNotification('Výzva splněna!', `Získáváš výzvu: ${ch}`);
+        }
       }
       onSuccess();
     }catch(e){Alert.alert('Chyba',e.message);}
@@ -1256,7 +1476,7 @@ const VisitsScreen = ({ user }) => {
         ListEmptyComponent={<View style={s.empty}><Ionicons name="beer-outline" size={60} color={C.border}/><Text style={s.emptyT}>Zatím žádné návštěvy</Text><Text style={s.emptySub}>Jdi na mapu a odklikni svoji první!</Text></View>}
       />
       {detailLoad&&<View style={[StyleSheet.absoluteFill,{backgroundColor:'rgba(0,0,0,0.45)',alignItems:'center',justifyContent:'center'}]}><ActivityIndicator color={C.amber} size="large"/></View>}
-      {detailPub&&<PubDetailModal pub={detailPub} onClose={()=>setDetail(null)}/>}
+      {detailPub&&<PubDetailModal pub={detailPub} onClose={()=>setDetail(null)} userId={user.id} />}
     </View>
   );
 };
@@ -1491,7 +1711,7 @@ const FindUserTab = ({ user }) => {
   );
 };
 
-const GalleryTab = () => {
+const GalleryTab = ({ user }) => {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefr] = useState(false);
@@ -1524,6 +1744,10 @@ const GalleryTab = () => {
     ));}
   };
 
+  const handleLikeUpdate = (photoId, liked, likeCount) => {
+    setPhotos(prev => prev.map(p => p.id === photoId ? {...p, liked, like_count: likeCount} : p));
+  };
+
   if(loading)return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
   const COLS=3, SIZE=(SW-32-8*2)/3;
   return(
@@ -1547,7 +1771,7 @@ const GalleryTab = () => {
         )}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="images-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádné fotky</Text></View>}
       />
-      {pv!==null&&<PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)}/>}
+      {pv!==null&&<PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)} userId={user.id} onLikeUpdate={handleLikeUpdate} />}
     </View>
   );
 };
@@ -1579,21 +1803,21 @@ const CommunityScreen = ({ user }) => {
         {tab==='leaderboard' && <LeaderboardTab user={user}/>}
         {tab==='chat'        && <ChatTab user={user}/>}
         {tab==='find'        && <FindUserTab user={user}/>}
-        {tab==='gallery'     && <GalleryTab/>}
+        {tab==='gallery'     && <GalleryTab user={user}/>}
       </View>
     </View>
   );
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PROFILE SCREEN (renovated)
+// PROFILE SCREEN (renovated with likes on my photos and new like notifications)
 // ══════════════════════════════════════════════════════════════════════════════
 const ProfileScreen = ({ user, onLogout }) => {
   const [me, setMe]             = useState(user);
   const [editBio, setEditBio]   = useState(false);
   const [bio, setBio]           = useState(user.bio||'');
   const [stats, setStats]       = useState(null);
-  const [period, setPeriod]     = useState('total'); // total|year|month|day
+  const [period, setPeriod]     = useState('total');
   const [photos, setPhotos]     = useState([]);
   const [rank, setRank]         = useState(null);
   const [pv, setPv]             = useState(null);
@@ -1601,7 +1825,7 @@ const ProfileScreen = ({ user, onLogout }) => {
   const [syncing, setSyncing]   = useState(false);
   const [loading, setLoading]   = useState(true);
 
-  useEffect(()=>{ loadAll(); checkOff(); },[]);
+  useEffect(()=>{ loadAll(); checkOff(); const interval = setInterval(checkNewLikes, 60000); return () => clearInterval(interval); },[]);
   useEffect(()=>{ loadStats(); },[period]);
 
   const loadAll = async()=>{
@@ -1632,6 +1856,17 @@ const ProfileScreen = ({ user, onLogout }) => {
     if(n>0){ await clearQ(); setOffQ(0); bust(`v_${user.id}`); bust(`vd_${user.id}`); Alert.alert('Sync','Synchronizováno '+n+' odkliknutí!'); }
     else Alert.alert('Sync','Nic k synchronizaci.');
     setSyncing(false);
+  };
+
+  const checkNewLikes = async () => {
+    const lastCheck = await AsyncStorage.getItem('lastLikeCheck');
+    try {
+      const res = await apiFetch(`/notifications/likes?since=${encodeURIComponent(lastCheck || '1970-01-01')}`);
+      if (res.count > 0) {
+        await scheduleLocalNotification('Nový like!', `Někdo ti dal like na fotce.`);
+      }
+      await AsyncStorage.setItem('lastLikeCheck', new Date().toISOString());
+    } catch(e) {}
   };
 
   const pickAvatar = async()=>{
@@ -1732,14 +1967,18 @@ const ProfileScreen = ({ user, onLogout }) => {
         </View>
       )}
 
-      {/* My photos */}
+      {/* My photos with like counts */}
       {photos.length>0&&(
         <View style={{marginHorizontal:16,marginBottom:16}}>
           <Text style={s.secLabel}>Moje fotky ({photos.length})</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {photos.map((p,i)=>(
-              <TouchableOpacity key={i} onPress={()=>setPv(i)} activeOpacity={0.85} style={{marginRight:8}}>
+              <TouchableOpacity key={i} onPress={()=>setPv(i)} activeOpacity={0.85} style={{marginRight:8,position:'relative'}}>
                 <Image source={{uri:p.url}} style={{width:90,height:80,borderRadius:10}} resizeMode="cover"/>
+                <View style={s.photoLikeBtnMini}>
+                  <Ionicons name="heart-outline" size={10} color={C.white}/>
+                  <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count || 0}</Text>
+                </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -1765,9 +2004,9 @@ const ProfileScreen = ({ user, onLogout }) => {
           <Text style={{fontSize:15,fontWeight:'600',color:C.red}}>Odhlásit se</Text>
         </TouchableOpacity>
       </View>
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',paddingBottom:10}}>Hospůdkobraní v1.2.1</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',paddingBottom:10}}>Hospůdkobraní v1.3.0</Text>
 
-      {pv!==null&&photos.length>0&&<PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)}/>}
+      {pv!==null && photos.length>0 && <PhotoViewer photos={photos.map(p=>({...p, liked:false, like_count: p.like_count || 0, username: me.username}))} startIndex={pv} onClose={()=>setPv(null)} userId={user.id} />}
     </ScrollView>
   );
 };
@@ -1811,18 +2050,15 @@ export default function App() {
       try{
         const [tk,ud]=await Promise.all([AsyncStorage.getItem('auth_token'),AsyncStorage.getItem('user_data')]);
         if(tk&&ud){
-          setUser(JSON.parse(ud)); // Ihned použij lokálně uložená data
-          // Pokus o obnovu ze serveru – pokud offline, ponech přihlášeného
+          setUser(JSON.parse(ud));
           apiFetch('/auth/me')
             .then(u=>{ setUser(u); AsyncStorage.setItem('user_data',JSON.stringify(u)); })
             .catch(async()=>{
               const net=await NetInfo.fetch();
               if(net.isConnected){
-                // Online, ale token je neplatný → odhlásit
                 await AsyncStorage.multiRemove(['auth_token','user_data']);
                 setUser(null);
               }
-              // Offline → ponechat přihlášeného s lokálními daty
             });
         }
       }catch{}
@@ -1938,6 +2174,8 @@ const s = StyleSheet.create({
   pvBtnOff:{opacity:0.3},
   pvCount: {color:C.cream,fontWeight:'700',fontSize:15},
   pvAuthor:{color:C.creamDim,fontSize:13,marginTop:8},
+  pvFooter: {position:'absolute',bottom:30,left:0,right:0,flexDirection:'row',justifyContent:'space-between',paddingHorizontal:20,alignItems:'center'},
+  pvLikeCount: {color:C.white,fontSize:14,fontWeight:'600'},
 
   // Page headers
   pageHdr:  {paddingTop:52,paddingHorizontal:20,paddingBottom:12,backgroundColor:C.bg},
@@ -2035,4 +2273,14 @@ const s = StyleSheet.create({
   // Gallery likes
   photoLikeBtn:{position:'absolute',bottom:4,right:4,backgroundColor:'rgba(0,0,0,0.55)',borderRadius:12,paddingHorizontal:5,paddingVertical:3,flexDirection:'row',alignItems:'center',gap:3},
   photoLikeT:  {color:C.white,fontSize:10,fontWeight:'700'},
+  photoLikeBtnMini:{position:'absolute',bottom:4,right:4,backgroundColor:'rgba(0,0,0,0.55)',borderRadius:8,paddingHorizontal:4,paddingVertical:2,flexDirection:'row',alignItems:'center',gap:2},
+
+  // Area warning banner
+  areaWarning: {position:'absolute',top:100,left:16,right:16,backgroundColor:C.bgCard,borderRadius:12,padding:10,flexDirection:'row',alignItems:'center',gap:8,borderWidth:1,borderColor:C.amber, shadowColor:'#000',shadowOffset:{width:0,height:2},shadowOpacity:0.3,shadowRadius:3,elevation:3},
+  areaWarningText: {color:C.cream,fontSize:12,fontWeight:'600',flex:1},
+
+  // Mock overlay
+  mockOverlay: {flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center',padding:32},
+  mockTitle: {color:C.red,fontSize:20,fontWeight:'900',marginTop:16,marginBottom:8},
+  mockText: {color:C.creamDim,fontSize:14,textAlign:'center',marginBottom:24},
 });
