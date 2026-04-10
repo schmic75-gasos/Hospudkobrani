@@ -3,6 +3,7 @@
     "name": "Hospůdkobraní",
     "slug": "hospudkobrani",
     "version": "1.0.1",
+    "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
