@@ -237,6 +237,8 @@ const Chip = ({ label, color=C.amber, icon }) => (
   </View>
 );
 
+const getPhotoLikeId = photo => photo?.id ?? photo?.photo_id ?? null;
+
 // Fullscreen photo viewer with likes and author click
 const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
   const [cur, setCur] = useState(startIndex);
@@ -244,18 +246,22 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
   const [likeCounts, setLikeCounts] = useState(photos.map(p => p.like_count || 0));
   const [userModal, setUserModal] = useState(null);
   const fa = useRef(new Animated.Value(0)).current;
+  const currentPhoto = photos[cur];
+  const currentPhotoLikeId = getPhotoLikeId(currentPhoto);
 
   useEffect(()=>{ Animated.timing(fa,{toValue:1,duration:200,useNativeDriver:true}).start(); },[]);
   const close = ()=>{ Animated.timing(fa,{toValue:0,duration:150,useNativeDriver:true}).start(onClose); };
 
   const handleLike = async () => {
     const photo = photos[cur];
+    const photoLikeId = getPhotoLikeId(photo);
+    if (!photoLikeId) return;
     const newLiked = !likedState[cur];
     setLikedState(prev => { const n=[...prev]; n[cur]=newLiked; return n; });
     setLikeCounts(prev => { const n=[...prev]; n[cur]=prev[cur] + (newLiked ? 1 : -1); return n; });
     try {
-      const res = await apiFetch(`/community/gallery/${photo.id}/like`, { method: 'POST' });
-      if (onLikeUpdate) onLikeUpdate(photo.id, res.liked, res.like_count);
+      const res = await apiFetch(`/community/gallery/${photoLikeId}/like`, { method: 'POST' });
+      if (onLikeUpdate) onLikeUpdate(photoLikeId, res.liked, res.like_count);
     } catch (e) {
       // revert
       setLikedState(prev => { const n=[...prev]; n[cur]=!newLiked; return n; });
@@ -271,12 +277,14 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
           <TouchableOpacity onPress={() => setUserModal(photos[cur].username)}>
             <Text style={s.pvAuthor}>{photos[cur].username}</Text>
           </TouchableOpacity>
-          <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
-            <TouchableOpacity onPress={handleLike}>
-              <Ionicons name={likedState[cur] ? 'heart' : 'heart-outline'} size={24} color={likedState[cur] ? C.red : C.white} />
-            </TouchableOpacity>
-            <Text style={s.pvLikeCount}>{likeCounts[cur]}</Text>
-          </View>
+          {currentPhotoLikeId ? (
+            <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
+              <TouchableOpacity onPress={handleLike}>
+                <Ionicons name={likedState[cur] ? 'heart' : 'heart-outline'} size={24} color={likedState[cur] ? C.red : C.white} />
+              </TouchableOpacity>
+              <Text style={s.pvLikeCount}>{likeCounts[cur]}</Text>
+            </View>
+          ) : <View />}
         </View>
         {photos.length>1 && (
           <View style={s.pvNav}>
@@ -434,15 +442,18 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
                             <Image source={{uri:p.url}} style={{width:120,height:90,borderRadius:10}} resizeMode="cover"/>
                             <View style={s.expandOverlay}><Ionicons name="expand-outline" size={14} color={C.white}/></View>
                           </TouchableOpacity>
-                          <TouchableOpacity style={s.photoLikeBtnMini} onPress={async()=>{
-                            const newLiked = !p.liked;
-                            setPhotos(prev => prev.map(ph => ph.id === p.id ? {...ph, liked:newLiked, like_count: (ph.like_count||0)+(newLiked?1:-1)} : ph));
-                            try { await apiFetch(`/community/gallery/${p.id}/like`, { method:'POST' }); }
-                            catch(e){ setPhotos(prev => prev.map(ph => ph.id === p.id ? {...ph, liked:!newLiked, like_count: (ph.like_count||0)+(newLiked?-1:1)} : ph)); }
-                          }}>
-                            <Ionicons name={p.liked?'heart':'heart-outline'} size={12} color={p.liked?C.red:C.white}/>
-                            <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count||0}</Text>
-                          </TouchableOpacity>
+                          {getPhotoLikeId(p) ? (
+                            <TouchableOpacity style={s.photoLikeBtnMini} onPress={async()=>{
+                              const photoLikeId = getPhotoLikeId(p);
+                              const newLiked = !p.liked;
+                              setPhotos(prev => prev.map(ph => getPhotoLikeId(ph) === photoLikeId ? {...ph, liked:newLiked, like_count: (ph.like_count||0)+(newLiked?1:-1)} : ph));
+                              try { await apiFetch(`/community/gallery/${photoLikeId}/like`, { method:'POST' }); }
+                              catch(e){ setPhotos(prev => prev.map(ph => getPhotoLikeId(ph) === photoLikeId ? {...ph, liked:!newLiked, like_count: (ph.like_count||0)+(newLiked?-1:1)} : ph)); }
+                            }}>
+                              <Ionicons name={p.liked?'heart':'heart-outline'} size={12} color={p.liked?C.red:C.white}/>
+                              <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count||0}</Text>
+                            </TouchableOpacity>
+                          ) : null}
                         </View>
                       ))}
                     </ScrollView>
@@ -1595,6 +1606,7 @@ const ChatTab = ({ user }) => {
   const [text, setText]       = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [userModal, setUserModal] = useState(null);
   const listRef = useRef(null);
 
   useEffect(()=>{ loadMsgs(); const t=setInterval(loadMsgs,10000); return()=>clearInterval(t); },[]);
@@ -1619,9 +1631,20 @@ const ChatTab = ({ user }) => {
     const isMe=item.user_id===user.id;
     return(
       <View style={[s.msgRow,isMe&&{flexDirection:'row-reverse'}]}>
-        {!isMe&&<Avatar url={item.avatar_url} size={28} style={{marginRight:6}}/>}
+        {!isMe&&(
+          <Avatar
+            url={item.avatar_url}
+            size={28}
+            style={{marginRight:6}}
+            onPress={()=>setUserModal(item.username)}
+          />
+        )}
         <View style={{maxWidth:'75%'}}>
-          {!isMe&&<Text style={[s.dimText,{fontSize:11,marginBottom:2}]}>{item.username}</Text>}
+          {!isMe&&(
+            <TouchableOpacity onPress={()=>setUserModal(item.username)} activeOpacity={0.7}>
+              <Text style={[s.dimText,{fontSize:11,marginBottom:2,textDecorationLine:'underline'}]}>{item.username}</Text>
+            </TouchableOpacity>
+          )}
           <View style={[s.msgBubble,isMe&&s.msgBubbleMe]}>
             <Text style={[s.msgText,isMe&&{color:C.bg}]}>{item.message}</Text>
           </View>
@@ -1649,6 +1672,7 @@ const ChatTab = ({ user }) => {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+      {userModal&&<UserProfileModal username={userModal} selfId={user.id} onClose={()=>setUserModal(null)}/>} 
     </View>
   );
 };
