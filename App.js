@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import MapLibreGL from '@maplibre/maplibre-react-native';
+import * as MapLibreGL from '@maplibre/maplibre-react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -23,8 +23,8 @@ import * as Notifications from 'expo-notifications';
 const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://fluffini.cz/api';
 
-MapLibreGL.setAccessToken('pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ');
-const MAPBOX_STYLE = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
+const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ';
+const MAPBOX_STYLE = `https://api.mapbox.com/styles/v1/thisik/cmnwu4fxv003p01s731x1b5wx?access_token=${MAPBOX_TOKEN}`;
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
