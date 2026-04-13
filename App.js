@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import { WebView } from 'react-native-webview';
+import MapLibreGL from '@maplibre/maplibre-react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -22,6 +22,9 @@ import * as Notifications from 'expo-notifications';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://fluffini.cz/api';
+
+MapLibreGL.setAccessToken('pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ');
+const MAPBOX_STYLE = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
@@ -33,79 +36,6 @@ const C = {
   purple: '#8E44AD', teal: '#16A085',
 };
 
-// ─── TILE LAYERS ──────────────────────────────────────────────────────────────
-const TILES = [
-  { key:'osm',   label:'OpenStreetMap', url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',                                                          attrib:'© OpenStreetMap contributors' },
-  { key:'locus', label:'Locus Map',     url:'https://tile.thunderforest.com/locus-4za/{z}/{x}/{y}.png?apikey=f944003b5ba34ff3a30dafe96e581f06', attrib:'© Thunderforest, © OSM' },
-];
-
-// ─── LEAFLET HTML (pro WebView) ───────────────────────────────────────────────
-const MAP_HTML = `<!DOCTYPE html>
-<html><head>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}html,body,#map{width:100%;height:100vh}
-    .pin{width:30px;height:30px;border-radius:50%;background:#F5A623;border:2px solid #C07D10;
-         display:flex;align-items:center;justify-content:center;font-size:16px}
-    .pin.v{background:#27AE60;border-color:#1e8449}
-  </style>
-</head><body><div id="map"></div><script>
-  var LAYERS={
-    osm:  {url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',attr:'\u00a9 OpenStreetMap contributors'},
-    locus:{url:'https://tile.thunderforest.com/locus-4za/{z}/{x}/{y}.png?apikey=f944003b5ba34ff3a30dafe96e581f06',attr:'\u00a9 Thunderforest, \u00a9 OSM'}
-  };
-  var CACHE='hospudka-v1';
-  var CachedLayer=L.TileLayer.extend({
-    createTile:function(c,done){
-      var img=document.createElement('img');
-      img.setAttribute('role','presentation');
-      var url=this.getTileUrl(c);
-      if(!('caches' in window)){
-        img.src=url;img.onload=function(){done(null,img);};img.onerror=function(e){done(e,img);};return img;
-      }
-      caches.open(CACHE).then(function(cache){
-        return cache.match(url).then(function(hit){
-          if(hit)return hit.blob();
-          return fetch(url).then(function(r){if(r.ok)cache.put(url,r.clone());return r.blob();});
-        });
-      }).then(function(b){img.src=URL.createObjectURL(b);done(null,img);}).catch(function(e){done(e,img);});
-      return img;
-    }
-  });
-  var map=L.map('map',{zoomControl:true}).setView([49.7384,13.3736],9);
-  var active=new CachedLayer(LAYERS.osm.url,{attribution:LAYERS.osm.attr,maxZoom:19});
-  active.addTo(map);
-  var mk={};
-  function icon(v){return L.divIcon({className:'',html:'<div class="pin'+(v?' v':'')+'">\ud83c\udf7a<\/div>',iconSize:[30,30],iconAnchor:[15,15]});}
-  function postRN(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify(m));}
-  function handle(e){
-    var msg;try{msg=JSON.parse(e.data);}catch(err){return;}
-    if(msg.type==='pubs'){
-      Object.keys(mk).forEach(function(k){mk[k].remove();});mk={};
-      msg.pubs.forEach(function(p){
-        var m=L.marker([p.lat,p.lng],{icon:icon(p.v)}).addTo(map);
-        m.on('click',function(){postRN({type:'pubTap',id:p.id});});
-        mk[p.id]=m;
-      });
-    }else if(msg.type==='flyTo'){
-      map.flyTo([msg.lat,msg.lng],msg.zoom||14);
-    }else if(msg.type==='setLayer'){
-      map.removeLayer(active);
-      var cfg=LAYERS[msg.key];
-      if(cfg){active=new CachedLayer(cfg.url,{attribution:cfg.attr,maxZoom:19});active.addTo(map);}
-    }else if(msg.type==='getCenter'){
-      var center=map.getCenter();
-      postRN({type:'centerChanged',lat:center.lat,lng:center.lng});
-    }
-  }
-  document.addEventListener('message',handle);
-  window.addEventListener('message',handle);
-  map.on('click',function(e){postRN({type:'mapClick',lat:e.latlng.lat,lng:e.latlng.lng});});
-  map.on('moveend',function(){var c=map.getCenter();postRN({type:'centerChanged',lat:c.lat,lng:c.lng});});
-  window.onload=function(){postRN({type:'ready'});};
-<\/script></body></html>`;
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 const getToken = () => AsyncStorage.getItem('auth_token');
@@ -820,60 +750,28 @@ const ReportPubModal = ({ pub, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MAP LAYER MODAL
-// ══════════════════════════════════════════════════════════════════════════════
-const LayerModal = ({ curKey, onSelect, onClose }) => (
-  <Modal visible animationType="slide" transparent>
-    <View style={s.modalOverlay}>
-      <View style={s.modalCard}>
-        <View style={s.modalHeader}>
-          <Text style={s.modalTitle}>Mapová vrstva</Text>
-          <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
-        </View>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {TILES.map(t=>(
-            <TouchableOpacity key={t.key} style={[s.layerRow,curKey===t.key&&{borderBottomColor:C.amber}]}
-              onPress={()=>{onSelect(t.key,t.url,t.attrib);onClose();}}>
-              <Ionicons name="map-outline" size={20} color={curKey===t.key?C.amber:C.creamDim}/>
-              <View style={{flex:1,marginLeft:10}}>
-                <Text style={[s.layerLabel,curKey===t.key&&{color:C.amber}]}>{t.label}</Text>
-                <Text style={s.dimText} numberOfLines={1}>{t.url.split('?')[0]}</Text>
-              </View>
-              {curKey===t.key&&<Ionicons name="checkmark-circle" size={20} color={C.amber}/>}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    </View>
-  </Modal>
-);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// MAP SCREEN – WebView + Leaflet
+// MAP SCREEN – MapLibreGL + Mapbox style
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const webViewRef      = useRef(null);
-  const hasCenteredRef  = useRef(false);
-  const suggestModeRef  = useRef(false);
+  const cameraRef          = useRef(null);
+  const hasCenteredRef     = useRef(false);
+  const suggestModeRef     = useRef(false);
 
   const [pubs, setPubs]                 = useState([]);
   const [visited, setVisited]           = useState(new Set());
   const [loc, setLoc]                   = useState(null);
   const [loading, setLoading]           = useState(true);
-  const [mapReady, setMapReady]         = useState(false);
   const [selPub, setSelPub]             = useState(null);
   const [showSheet, setShowSheet]       = useState(false);
   const [showInfo, setShowInfo]         = useState(false);
   const [logModal, setLogModal]         = useState(false);
   const [filterMod, setFilterMod]       = useState(false);
-  const [layerMod, setLayerMod]         = useState(false);
   const [offlineRegionsMod, setOffReg]  = useState(false);
   const [reportMod, setReportMod]       = useState(false);
   const [suggestMode, setSuggestMode]   = useState(false);
   const [suggestCoords, setSuggestCo]   = useState(null);
   const [suggestModal, setSuggestMod]   = useState(false);
   const [filters, setFilters]           = useState({...DEF_FILTERS});
-  const [tileKey, setTileKey]           = useState('osm');
   const [mockBlocked, setMockBlocked]   = useState(false);
   const [showAreaWarning, setShowAreaWarning] = useState(false);
   const [currentAreaName, setCurrentAreaName] = useState('');
@@ -889,18 +787,7 @@ const MapScreen = ({ user }) => {
     return n;
   },[filters]);
 
-  useEffect(()=>{loadData();setupLoc();loadPrefs();registerBackgroundFetch();},[]);
-
-  const loadPrefs = async () => {
-    const tk = await AsyncStorage.getItem('tk');
-    if (tk && TILES.find(t=>t.key===tk)) setTileKey(tk);
-  };
-
-  const sendToWebView = msg => {
-    webViewRef.current?.injectJavaScript(
-      `handle({data:${JSON.stringify(JSON.stringify(msg))}});true;`
-    );
-  };
+  useEffect(()=>{loadData();setupLoc();registerBackgroundFetch();},[]);
 
   const loadData = async () => {
     try {
@@ -926,7 +813,6 @@ const MapScreen = ({ user }) => {
     const {status} = await Location.requestForegroundPermissionsAsync();
     if(status !== 'granted') return;
     const l = await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.High});
-    // Detekce mock polohy
     if (l.mocked) {
       if (user.is_admin) {
         Alert.alert('Mock poloha', 'Mock poloha je zapnutá. Pro testovací účely OK.');
@@ -956,52 +842,66 @@ const MapScreen = ({ user }) => {
     return true;
   }),[pubs,visited,filters]);
 
-  useEffect(()=>{
-    if(!mapReady||pubs.length===0)return;
-    const data=filtered.map(p=>({id:p.id,lat:p.latitude,lng:p.longitude,v:visited.has(p.id)}));
-    sendToWebView({type:'pubs',pubs:data});
-  },[mapReady,filtered,visited]);
+  const pubsGeojson = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: filtered.map(p => ({
+      type: 'Feature',
+      id: String(p.id),
+      geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] },
+      properties: { id: p.id, visited: visited.has(p.id) ? 1 : 0 },
+    })),
+  }), [filtered, visited]);
 
+  // Fly to after user location is obtained (once)
   useEffect(()=>{
-    if(!mapReady||!loc||hasCenteredRef.current)return;
+    if(!loc||hasCenteredRef.current)return;
     hasCenteredRef.current = true;
-    sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
-  },[mapReady,loc]);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [loc.longitude, loc.latitude],
+      zoomLevel: 14,
+      animationDuration: 800,
+    });
+  },[loc]);
 
-  const onWebViewMessage = e => {
-    const msg=JSON.parse(e.nativeEvent.data);
-    if(msg.type==='ready'){setMapReady(true);}
-    else if(msg.type==='pubTap'){const pub=pubs.find(p=>p.id===msg.id);if(pub)openPub(pub);}
-    else if(msg.type==='mapClick'){
-      if(suggestModeRef.current){
-        setSuggestCo({lat:msg.lat,lng:msg.lng});
-        setSuggestMod(true);
-        suggestModeRef.current=false;
-        setSuggestMode(false);
+  const checkArea = useCallback(async (lat, lng) => {
+    const offlineAreas = await getOfflineAreas();
+    let found = false;
+    let areaName = '';
+    for (const code of offlineAreas) {
+      const country = COUNTRIES.find(c => c.code === code);
+      if (country && lat >= country.bounds.minLat && lat <= country.bounds.maxLat &&
+          lng >= country.bounds.minLng && lng <= country.bounds.maxLng) {
+        found = true;
+        areaName = country.name;
+        break;
       }
     }
-    else if(msg.type==='centerChanged'){
-      // Kontrola, zda je střed v některé stažené oblasti
-      const checkArea = async () => {
-        const offlineAreas = await getOfflineAreas();
-        let found = false;
-        let areaName = '';
-        for (const code of offlineAreas) {
-          const country = COUNTRIES.find(c => c.code === code);
-          if (country && msg.lat >= country.bounds.minLat && msg.lat <= country.bounds.maxLat &&
-              msg.lng >= country.bounds.minLng && msg.lng <= country.bounds.maxLng) {
-            found = true;
-            areaName = country.name;
-            break;
-          }
-        }
-        setShowAreaWarning(!found);
-        if (!found) setCurrentAreaName(areaName || 'této oblasti');
-        else setCurrentAreaName('');
-      };
-      checkArea();
-    }
-  };
+    setShowAreaWarning(!found);
+    if (!found) setCurrentAreaName(areaName || 'této oblasti');
+    else setCurrentAreaName('');
+  }, []);
+
+  const handleRegionChange = useCallback(e => {
+    if (!e?.geometry?.coordinates) return;
+    const [lng, lat] = e.geometry.coordinates;
+    checkArea(lat, lng);
+  }, [checkArea]);
+
+  const handleMapPress = useCallback(e => {
+    if (!suggestModeRef.current) return;
+    const [lng, lat] = e.geometry.coordinates;
+    setSuggestCo({ lat, lng });
+    setSuggestMod(true);
+    suggestModeRef.current = false;
+    setSuggestMode(false);
+  }, []);
+
+  const handlePubTap = useCallback(e => {
+    const feature = e?.features?.[0];
+    if (!feature) return;
+    const pub = pubs.find(p => p.id === feature.properties.id);
+    if (pub) openPub(pub);
+  }, [pubs]);
 
   const selPubDist = useMemo(()=>{
     if(!loc||!selPub)return null;
@@ -1023,11 +923,6 @@ const MapScreen = ({ user }) => {
     if(d>25){Alert.alert('Příliš daleko',`Jsi ${Math.round(d)} m od hospůdky. Musíš být do 25 m.`);return;}
     setLogModal(true);
   };
-  const applyLayer = (key,url,attrib)=>{
-    setTileKey(key);
-    sendToWebView({type:'setLayer',key});
-    AsyncStorage.setItem('tk',key);
-  };
 
   if(loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
   if(mockBlocked) return (
@@ -1046,17 +941,42 @@ const MapScreen = ({ user }) => {
 
   return (
     <View style={{flex:1}}>
-      <WebView
-        ref={webViewRef}
-        source={{html:MAP_HTML}}
+      <MapLibreGL.MapView
         style={{flex:1}}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        cacheEnabled={true}
-        userAgent="Hospudkobrani/1.4 (React Native)"
-        originWhitelist={['*']}
-        onMessage={onWebViewMessage}
-      />
+        styleURL={MAPBOX_STYLE}
+        onPress={handleMapPress}
+        onRegionDidChange={handleRegionChange}
+        logoEnabled={false}
+        attributionEnabled={false}
+      >
+        <MapLibreGL.Camera
+          ref={cameraRef}
+          zoomLevel={9}
+          centerCoordinate={[13.3736, 49.7384]}
+        />
+        <MapLibreGL.ShapeSource id="pubs-source" shape={pubsGeojson} onPress={handlePubTap}>
+          <MapLibreGL.CircleLayer
+            id="pubs-unvisited"
+            filter={['==', ['get', 'visited'], 0]}
+            style={{
+              circleColor: '#F5A623',
+              circleRadius: 10,
+              circleStrokeWidth: 2,
+              circleStrokeColor: '#C07D10',
+            }}
+          />
+          <MapLibreGL.CircleLayer
+            id="pubs-visited"
+            filter={['==', ['get', 'visited'], 1]}
+            style={{
+              circleColor: '#27AE60',
+              circleRadius: 10,
+              circleStrokeWidth: 2,
+              circleStrokeColor: '#1e8449',
+            }}
+          />
+        </MapLibreGL.ShapeSource>
+      </MapLibreGL.MapView>
 
       {/* HUD */}
       <View style={s.mapHud}>
@@ -1074,16 +994,13 @@ const MapScreen = ({ user }) => {
       <View style={s.mapCtrl}>
         <TouchableOpacity style={s.mapBtn} onPress={()=>{
           if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
-          sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
+          cameraRef.current?.setCamera({centerCoordinate:[loc.longitude,loc.latitude],zoomLevel:14,animationDuration:800});
         }}>
           <Ionicons name="locate-outline" size={22} color={C.amber}/>
         </TouchableOpacity>
         <TouchableOpacity style={s.mapBtn} onPress={()=>setFilterMod(true)}>
           <Ionicons name="options-outline" size={22} color={fCount>0?C.amber:C.creamDim}/>
           {fCount>0&&<View style={s.fBadge}><Text style={s.fBadgeT}>{fCount}</Text></View>}
-        </TouchableOpacity>
-        <TouchableOpacity style={s.mapBtn} onPress={()=>setLayerMod(true)}>
-          <Ionicons name="layers-outline" size={22} color={C.creamDim}/>
         </TouchableOpacity>
         <TouchableOpacity style={s.mapBtn} onPress={()=>setOffReg(true)}>
           <Ionicons name="download-outline" size={22} color={C.creamDim}/>
@@ -1185,7 +1102,6 @@ const MapScreen = ({ user }) => {
           }}/>
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
-      {layerMod&&<LayerModal curKey={tileKey} onSelect={applyLayer} onClose={()=>setLayerMod(false)}/>}
       {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={loadData} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
     </View>

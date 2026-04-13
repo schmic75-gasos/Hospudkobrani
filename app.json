@@ -55,7 +55,8 @@
           "photosPermission": "Hospůdkobraní chce přistupovat k tvým fotkám."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "@maplibre/maplibre-react-native"
     ],
     "extra": {
       "eas": {
