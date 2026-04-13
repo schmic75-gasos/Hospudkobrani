@@ -551,8 +551,18 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
   const [downloading, setDl]      = useState(null);
   const [pubCounts, setPubCounts] = useState({});
   const [versions, setVersions]   = useState({});
+  const [progress, setProgress]   = useState({});
 
   useEffect(()=>{ loadAreas(); },[]);
+
+  useEffect(() => {
+    if (!MapboxNative?.offlineManager) return;
+    const sub = MapboxNative.offlineManager.subscribe((pack, status) => {
+      const pct = status.percentage || 0;
+      setProgress(prev => ({ ...prev, [pack.name]: pct }));
+    });
+    return () => sub?.remove?.();
+  }, []);
 
   const loadAreas = async () => {
     const a = await getOfflineAreas(); setAreas(a);
@@ -570,8 +580,42 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
   };
 
   const download = async (country) => {
+    // TASK 3: Warn on mobile data
+    const net = await NetInfo.fetch();
+    if (net.type !== 'wifi') {
+      const proceed = await new Promise(resolve => {
+        Alert.alert(
+          'Stahování přes mobilní data',
+          'Stahování map může mít stovky MB. Opravdu chceš pokračovat?',
+          [
+            { text: 'Zrušit', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Pokračovat', onPress: () => resolve(true) }
+          ]
+        );
+      });
+      if (!proceed) return;
+    }
+
     setDl(country.code);
     try {
+      // TASK 1: Check if map pack already exists
+      if (MapboxNative?.offlineManager) {
+        const packs = await MapboxNative.offlineManager.getPacks();
+        const exists = packs.find(p => p.name === `map_${country.code}`);
+        if (!exists) {
+          await MapboxNative.offlineManager.createPack({
+            name: `map_${country.code}`,
+            styleURL: MAPBOX_STYLE_URL,
+            bounds: [
+              [country.bounds.minLng, country.bounds.minLat],
+              [country.bounds.maxLng, country.bounds.maxLat]
+            ],
+            minZoom: 5,
+            maxZoom: 14,
+          });
+        }
+      }
+
       const fresh = await apiFetch(`/pubs?country=${country.code}`);
       const existing = await getOfflinePubs();
       const ids = new Set(fresh.map(p=>p.id));
@@ -637,6 +681,10 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
     Alert.alert(`Smazat ${country?.name}?`, 'Hospůdky z dané oblasti budou odebrány z offline úložiště.', [
       {text:'Zrušit',style:'cancel'},
       {text:'Smazat',style:'destructive', onPress: async () => {
+        // TASK 5: Delete offline map pack
+        if (MapboxNative?.offlineManager) {
+          try { await MapboxNative.offlineManager.deletePack(`map_${code}`); } catch {}
+        }
         const pubs = await getOfflinePubs();
         await saveOfflinePubs(pubs.filter(p=>p.country!==code));
         const newAreas = areas.filter(a=>a!==code);
@@ -663,6 +711,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
               const downloaded = areas.includes(c.code);
               const isDown     = downloading===c.code;
               const count      = pubCounts[c.code];
+              const pct        = progress[`map_${c.code}`];
               const hasUpdate  = downloaded && versions[c.code] && (()=>{ /* dummy, kontrola až po kliknutí */ return false; })();
               return (
                 <View key={c.code} style={s.areaRow}>
@@ -670,6 +719,14 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
                   <View style={{flex:1}}>
                     <Text style={[s.areaName,downloaded&&{color:C.green}]}>{c.name}</Text>
                     {downloaded&&count!=null&&<Text style={s.dimText}>{count} hospůdek</Text>}
+                    {pct > 0 && pct < 100 && (
+                      <View style={{marginTop:4}}>
+                        <View style={{height:6,backgroundColor:'#333',borderRadius:4,overflow:'hidden'}}>
+                          <View style={{width:`${pct}%`,height:'100%',backgroundColor:C.amber}}/>
+                        </View>
+                        <Text style={{fontSize:10,color:'#aaa'}}>{Math.round(pct)} %</Text>
+                      </View>
+                    )}
                   </View>
                   {downloaded ? (
                     <View style={{flexDirection:'row',gap:8}}>
@@ -870,7 +927,8 @@ const MapScreen = ({ user }) => {
     setupLoc();
     registerBackgroundFetch();
 
-    if (Platform.OS === 'android' && MapboxNative) {
+    // BONUS: Keep Mapbox informed of connectivity on all platforms
+    if (MapboxNative) {
       NetInfo.fetch().then(state => MapboxNative.setConnected(state.isConnected ?? true));
       const unsubscribe = NetInfo.addEventListener(state => {
         MapboxNative.setConnected(state.isConnected ?? true);
@@ -983,6 +1041,7 @@ const MapScreen = ({ user }) => {
   },[loc,selPub]);
 
   const openPub = useCallback(pub => {
+    if (!cameraRef.current) return;
     setSelPub(pub);
     setShowSheet(true);
     cameraRef.current?.setCamera({
