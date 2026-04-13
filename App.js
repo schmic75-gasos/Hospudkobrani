@@ -12,7 +12,6 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -24,137 +23,30 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://fluffini.cz/api';
 
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ';
-const MAPBOX_STYLE = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
+const MAPBOX_STYLE_URL = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
+const INITIAL_MAP_CENTER = [13.3736, 49.7384];
+const PUBS_SOURCE_ID = 'pubs-source';
+const SELECTED_PUB_SOURCE_ID = 'selected-pub-source';
 
-// ─── MAPBOX GL JS HTML (WebView) ──────────────────────────────────────────────
-const MAP_HTML = `<!DOCTYPE html>
-<html><head>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet">
-  <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"><\/script>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    html,body,#map{width:100%;height:100vh;overflow:hidden}
-  </style>
-</head><body><div id="map"></div><script>
-  mapboxgl.accessToken='${MAPBOX_TOKEN}';
-
-  // Nakreslí pin ikonu na canvas pro Mapbox addImage()
-  function drawPinIcon(visited) {
-    var W=34, H=46;
-    var canvas=document.createElement('canvas');
-    canvas.width=W; canvas.height=H;
-    var c=canvas.getContext('2d');
-    var accent=visited?'#27AE60':'#F5A623';
-    var accentDark=visited?'#1e8449':'#C07D10';
-    var cx=W/2, r=W/2-2, cy=r+2, tipY=H-3;
-    var alpha=Math.asin(r/(tipY-cy));
-    var rA=Math.PI/2-alpha, lA=Math.PI/2+alpha;
-
-    // Stín
-    c.save();
-    c.shadowColor=accentDark; c.shadowBlur=8; c.shadowOffsetY=2;
-    // Tělo pinu
-    c.beginPath();
-    c.arc(cx,cy,r,rA,lA,true);
-    c.lineTo(cx,tipY);
-    c.closePath();
-    c.fillStyle='#1A1200';
-    c.fill();
-    c.restore();
-
-    // Ohraničení
-    c.beginPath();
-    c.arc(cx,cy,r,rA,lA,true);
-    c.lineTo(cx,tipY);
-    c.closePath();
-    c.strokeStyle=accent; c.lineWidth=2.2; c.stroke();
-
-    // Vnitřní záře
-    c.beginPath(); c.arc(cx,cy,r-5,0,Math.PI*2);
-    c.fillStyle=accent+'20'; c.fill();
-
-    if(!visited){
-      // Pivní džbán
-      var bx=cx-6.5, by=cy-5.5, bw=11, bh=9;
-      c.lineCap='round'; c.lineJoin='round';
-      // Pěna (nafouklé kopečky nahoře)
-      c.fillStyle=accent;
-      c.beginPath();
-      c.arc(bx+2.2,by,2.3,Math.PI,0);
-      c.arc(bx+5.5,by-0.8,2.5,Math.PI,0);
-      c.arc(bx+8.8,by,2.3,Math.PI,0);
-      c.closePath(); c.fill();
-      // Tělo džbánu
-      c.strokeStyle=accent; c.fillStyle='transparent'; c.lineWidth=1.6;
-      c.beginPath(); c.rect(bx,by,bw,bh); c.stroke();
-      // Ucho
-      c.beginPath();
-      c.moveTo(bx+bw,by+bh*0.22);
-      c.quadraticCurveTo(bx+bw+5.5,by+bh*0.22,bx+bw+5.5,by+bh*0.5);
-      c.quadraticCurveTo(bx+bw+5.5,by+bh*0.78,bx+bw,by+bh*0.78);
-      c.stroke();
-      // Linka uprostřed džbánu (pivo + pěna oddíl)
-      c.beginPath(); c.moveTo(bx+1,by+3); c.lineTo(bx+bw-1,by+3);
-      c.strokeStyle=accent+'80'; c.lineWidth=1; c.stroke();
-    } else {
-      // Fajfka pro navštívené
-      c.beginPath();
-      c.moveTo(cx-6,cy+2); c.lineTo(cx-1,cy+7); c.lineTo(cx+7,cy-5);
-      c.strokeStyle=accent; c.lineWidth=2.8;
-      c.lineCap='round'; c.lineJoin='round'; c.stroke();
-      // Malý kroužek
-      c.beginPath(); c.arc(cx,cy,r-5,0,Math.PI*2);
-      c.strokeStyle=accent+'50'; c.lineWidth=1; c.stroke();
-    }
-    return c.getImageData(0,0,W,H);
+const MAPBOX_SDK = (() => {
+  try {
+    const mod = require('@rnmapbox/maps');
+    mod.default.setAccessToken(MAPBOX_TOKEN);
+    mod.default.setTelemetryEnabled(false);
+    return mod;
+  } catch (error) {
+    console.warn('Mapbox native SDK neni dostupne.', error);
+    return null;
   }
+})();
 
-  var map=new mapboxgl.Map({
-    container:'map',
-    style:'${MAPBOX_STYLE}',
-    center:[13.3736,49.7384],
-    zoom:9,
-    attributionControl:false
-  });
-  function postRN(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify(m));}
-  map.on('load',function(){
-    map.addImage('pin-u',drawPinIcon(false));
-    map.addImage('pin-v',drawPinIcon(true));
-    map.addSource('pubs',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-    map.addLayer({id:'pubs-layer',type:'symbol',source:'pubs',layout:{
-      'icon-image':['case',['==',['get','visited'],1],'pin-v','pin-u'],
-      'icon-size':1,
-      'icon-anchor':'bottom',
-      'icon-allow-overlap':true,
-      'icon-ignore-placement':true
-    }});
-    map.on('click','pubs-layer',function(e){
-      if(e.features&&e.features[0])postRN({type:'pubTap',id:e.features[0].properties.id});
-    });
-    map.on('click',function(e){
-      var fs=map.queryRenderedFeatures(e.point,{layers:['pubs-layer']});
-      if(!fs||!fs.length) postRN({type:'mapClick',lat:e.lngLat.lat,lng:e.lngLat.lng});
-    });
-    map.on('moveend',function(){var c=map.getCenter();postRN({type:'centerChanged',lat:c.lat,lng:c.lng});});
-    postRN({type:'ready'});
-  });
-  function handle(e){
-    var msg;try{msg=JSON.parse(e.data);}catch(err){return;}
-    if(msg.type==='pubs'){
-      var src=map.getSource('pubs'); if(!src) return;
-      src.setData({type:'FeatureCollection',features:msg.pubs.map(function(p){
-        return{type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},properties:{id:p.id,visited:p.v?1:0}};
-      })});
-    }else if(msg.type==='flyTo'){
-      map.flyTo({center:[msg.lng,msg.lat],zoom:msg.zoom||14});
-    }else if(msg.type==='getCenter'){
-      var c=map.getCenter(); postRN({type:'centerChanged',lat:c.lat,lng:c.lng});
-    }
-  }
-  document.addEventListener('message',handle);
-  window.addEventListener('message',handle);
-<\/script></body></html>`;
+const MapboxNative = MAPBOX_SDK?.default;
+const MapboxMapView = MAPBOX_SDK?.MapView;
+const MapboxCamera = MAPBOX_SDK?.Camera;
+const MapboxShapeSource = MAPBOX_SDK?.ShapeSource;
+const MapboxCircleLayer = MAPBOX_SDK?.CircleLayer;
+const MapboxSymbolLayer = MAPBOX_SDK?.SymbolLayer;
+const MapboxLocationPuck = MAPBOX_SDK?.LocationPuck;
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
@@ -164,6 +56,39 @@ const C = {
   red: '#C0392B', green: '#27AE60', blue: '#2980B9',
   border: '#3D2800', white: '#FFFFFF', tabBar: '#130D00', star: '#FFD700',
   purple: '#8E44AD', teal: '#16A085',
+};
+
+const mapLayerStyles = {
+  clusterCircles: {
+    circlePitchAlignment: 'map',
+    circleColor: ['step', ['get', 'point_count'], C.amberDark, 15, C.amber, 40, '#FFD166'],
+    circleRadius: ['step', ['get', 'point_count'], 20, 15, 26, 40, 32],
+    circleStrokeWidth: 2,
+    circleStrokeColor: C.bgCard,
+    circleOpacity: 0.95,
+  },
+  clusterLabels: {
+    textField: ['get', 'point_count_abbreviated'],
+    textSize: 12,
+    textColor: C.bg,
+    textAllowOverlap: true,
+    textIgnorePlacement: true,
+  },
+  pubs: {
+    circlePitchAlignment: 'map',
+    circleColor: ['case', ['==', ['get', 'visited'], 1], C.green, C.amber],
+    circleRadius: ['interpolate', ['linear'], ['zoom'], 8, 6, 12, 8.5, 16, 11],
+    circleStrokeWidth: 2,
+    circleStrokeColor: C.bgCard,
+    circleOpacity: 0.97,
+  },
+  selectedPub: {
+    circlePitchAlignment: 'map',
+    circleColor: 'rgba(255,255,255,0.14)',
+    circleStrokeColor: C.white,
+    circleStrokeWidth: 3,
+    circleRadius: ['interpolate', ['linear'], ['zoom'], 8, 12, 12, 16, 16, 20],
+  },
 };
 
 
@@ -883,15 +808,16 @@ const ReportPubModal = ({ pub, onClose }) => {
 // MAP SCREEN – WebView + Mapbox GL JS
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const webViewRef      = useRef(null);
+  const cameraRef       = useRef(null);
+  const shapeSourceRef  = useRef(null);
   const hasCenteredRef  = useRef(false);
   const suggestModeRef  = useRef(false);
+  const watchRef        = useRef(null);
 
   const [pubs, setPubs]                 = useState([]);
   const [visited, setVisited]           = useState(new Set());
   const [loc, setLoc]                   = useState(null);
   const [loading, setLoading]           = useState(true);
-  const [mapReady, setMapReady]         = useState(false);
   const [selPub, setSelPub]             = useState(null);
   const [showSheet, setShowSheet]       = useState(false);
   const [showInfo, setShowInfo]         = useState(false);
@@ -906,6 +832,7 @@ const MapScreen = ({ user }) => {
   const [mockBlocked, setMockBlocked]   = useState(false);
   const [showAreaWarning, setShowAreaWarning] = useState(false);
   const [currentAreaName, setCurrentAreaName] = useState('');
+  const [viewport, setViewport]         = useState({ center: INITIAL_MAP_CENTER, zoom: 9 });
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -918,13 +845,46 @@ const MapScreen = ({ user }) => {
     return n;
   },[filters]);
 
-  useEffect(()=>{loadData();setupLoc();registerBackgroundFetch();},[]);
+  const updateAreaWarning = useCallback(async (lat, lng) => {
+    const offlineAreas = await getOfflineAreas();
+    let found = false;
+    for (const code of offlineAreas) {
+      const country = COUNTRIES.find(c => c.code === code);
+      if (!country) continue;
+      if (
+        lat >= country.bounds.minLat &&
+        lat <= country.bounds.maxLat &&
+        lng >= country.bounds.minLng &&
+        lng <= country.bounds.maxLng
+      ) {
+        found = true;
+        break;
+      }
+    }
+    setShowAreaWarning(!found);
+    setCurrentAreaName(found ? '' : 'této oblasti');
+  }, []);
 
-  const sendToWebView = msg => {
-    webViewRef.current?.injectJavaScript(
-      `handle({data:${JSON.stringify(JSON.stringify(msg))}});true;`
-    );
-  };
+  useEffect(() => {
+    loadData();
+    setupLoc();
+    registerBackgroundFetch();
+
+    if (Platform.OS === 'android' && MapboxNative) {
+      NetInfo.fetch().then(state => MapboxNative.setConnected(state.isConnected ?? true));
+      const unsubscribe = NetInfo.addEventListener(state => {
+        MapboxNative.setConnected(state.isConnected ?? true);
+      });
+      return () => {
+        watchRef.current?.remove?.();
+        unsubscribe();
+      };
+    }
+
+    return () => {
+      watchRef.current?.remove?.();
+    };
+  }, [updateAreaWarning]);
 
   const loadData = async () => {
     try {
@@ -942,6 +902,7 @@ const MapScreen = ({ user }) => {
       }
       setPubs(offPubs);
       setVisited(new Set(vd.map(v=>v.pub_id)));
+      updateAreaWarning(viewport.center[1], viewport.center[0]);
     } catch(e){console.error(e);}
     finally{setLoading(false);}
   };
@@ -959,7 +920,7 @@ const MapScreen = ({ user }) => {
       }
     }
     setLoc(l.coords);
-    Location.watchPositionAsync({accuracy:Location.Accuracy.High,distanceInterval:5}, ll => {
+    watchRef.current = await Location.watchPositionAsync({accuracy:Location.Accuracy.High,distanceInterval:5}, ll => {
       if (ll.mocked && !user.is_admin) {
         setMockBlocked(true);
       } else {
@@ -980,62 +941,108 @@ const MapScreen = ({ user }) => {
     return true;
   }),[pubs,visited,filters]);
 
-  useEffect(()=>{
-    if(!mapReady||pubs.length===0)return;
-    const data=filtered.map(p=>({id:p.id,lat:p.latitude,lng:p.longitude,v:visited.has(p.id)}));
-    sendToWebView({type:'pubs',pubs:data});
-  },[mapReady,filtered,visited]);
+  const pubsShape = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: filtered
+      .filter(p => Number.isFinite(p.longitude) && Number.isFinite(p.latitude))
+      .map(p => ({
+        type: 'Feature',
+        id: String(p.id),
+        properties: { id: p.id, visited: visited.has(p.id) ? 1 : 0 },
+        geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] },
+      })),
+  }), [filtered, visited]);
+
+  const selectedPubShape = useMemo(() => {
+    if (!selPub) return null;
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        id: `selected-${selPub.id}`,
+        properties: {},
+        geometry: { type: 'Point', coordinates: [selPub.longitude, selPub.latitude] },
+      }],
+    };
+  }, [selPub]);
 
   useEffect(()=>{
-    if(!mapReady||!loc||hasCenteredRef.current)return;
+    if(!loc||hasCenteredRef.current||!cameraRef.current)return;
     hasCenteredRef.current = true;
-    sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
-  },[mapReady,loc]);
-
-  const onWebViewMessage = e => {
-    const msg=JSON.parse(e.nativeEvent.data);
-    if(msg.type==='ready'){setMapReady(true);}
-    else if(msg.type==='pubTap'){const pub=pubs.find(p=>p.id===msg.id);if(pub)openPub(pub);}
-    else if(msg.type==='mapClick'){
-      if(suggestModeRef.current){
-        setSuggestCo({lat:msg.lat,lng:msg.lng});
-        setSuggestMod(true);
-        suggestModeRef.current=false;
-        setSuggestMode(false);
-      }
-    }
-    else if(msg.type==='centerChanged'){
-      const checkArea = async () => {
-        const offlineAreas = await getOfflineAreas();
-        let found = false;
-        let areaName = '';
-        for (const code of offlineAreas) {
-          const country = COUNTRIES.find(c => c.code === code);
-          if (country && msg.lat >= country.bounds.minLat && msg.lat <= country.bounds.maxLat &&
-              msg.lng >= country.bounds.minLng && msg.lng <= country.bounds.maxLng) {
-            found = true;
-            areaName = country.name;
-            break;
-          }
-        }
-        setShowAreaWarning(!found);
-        if (!found) setCurrentAreaName(areaName || 'této oblasti');
-        else setCurrentAreaName('');
-      };
-      checkArea();
-    }
-  };
+    cameraRef.current.setCamera({
+      centerCoordinate: [loc.longitude, loc.latitude],
+      zoomLevel: 14,
+      animationDuration: 900,
+      animationMode: 'flyTo',
+    });
+  },[loc]);
 
   const selPubDist = useMemo(()=>{
     if(!loc||!selPub)return null;
     return Math.round(hav(loc.latitude,loc.longitude,selPub.latitude,selPub.longitude));
   },[loc,selPub]);
 
-  const openPub = pub => {
-    setSelPub(pub); setShowSheet(true);
+  const openPub = useCallback(pub => {
+    setSelPub(pub);
+    setShowSheet(true);
+    cameraRef.current?.setCamera({
+      centerCoordinate: [pub.longitude, pub.latitude],
+      padding: { paddingTop: 80, paddingRight: 40, paddingBottom: 260, paddingLeft: 40 },
+      animationDuration: 500,
+      animationMode: 'easeTo',
+    });
     Animated.spring(slideAnim,{toValue:0,useNativeDriver:true,tension:100}).start();
-  };
+  }, [slideAnim]);
+
+  const handleSourcePress = useCallback(async event => {
+    const feature = event.features?.[0];
+    if (!feature) return;
+
+    if (feature.properties?.cluster) {
+      try {
+        const zoom = await shapeSourceRef.current?.getClusterExpansionZoom(feature);
+        const coords = feature.geometry?.coordinates;
+        if (Array.isArray(coords)) {
+          cameraRef.current?.setCamera({
+            centerCoordinate: coords,
+            zoomLevel: zoom,
+            animationDuration: 450,
+            animationMode: 'easeTo',
+          });
+        }
+      } catch (error) {
+        console.warn('Cluster zoom selhal.', error);
+      }
+      return;
+    }
+
+    const pub = pubs.find(p => String(p.id) === String(feature.properties?.id));
+    if (pub) openPub(pub);
+  }, [openPub, pubs]);
+
+  const handleMapPress = useCallback(feature => {
+    if (!suggestModeRef.current) return;
+    const coords = feature?.geometry?.coordinates;
+    if (!Array.isArray(coords)) return;
+    setSuggestCo({ lat: coords[1], lng: coords[0] });
+    setSuggestMod(true);
+    suggestModeRef.current = false;
+    setSuggestMode(false);
+  }, []);
+
+  const handleMapIdle = useCallback(state => {
+    const center = state?.properties?.center;
+    if (!Array.isArray(center)) return;
+    setViewport({ center, zoom: state.properties.zoom });
+    updateAreaWarning(center[1], center[0]);
+  }, [updateAreaWarning]);
+
   const closeSheet = ()=>{
+    cameraRef.current?.setCamera({
+      padding: { paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0 },
+      animationDuration: 200,
+      animationMode: 'easeTo',
+    });
     Animated.timing(slideAnim,{toValue:300,duration:200,useNativeDriver:true}).start(()=>{
       setShowSheet(false); setSelPub(null);
     });
@@ -1056,18 +1063,75 @@ const MapScreen = ({ user }) => {
     </View>
   );
 
+  if (!MAPBOX_SDK || !MapboxMapView || !MapboxCamera || !MapboxShapeSource || !MapboxCircleLayer || !MapboxSymbolLayer) {
+    return (
+      <View style={[s.center,{padding:24}]}> 
+        <View style={s.authCard}>
+          <Text style={s.modalTitle}>Mapbox Native neni k dispozici</Text>
+          <Text style={[s.dimText,{marginTop:10,lineHeight:19}]}>Aplikace uz nepouziva WebView. Pro mapu je potreba development build nebo EAS build s nativnim modulem @rnmapbox/maps.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={{flex:1}}>
-      <WebView
-        ref={webViewRef}
-        source={{html:MAP_HTML}}
+      <MapboxMapView
         style={{flex:1}}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        userAgent="Hospudkobrani/1.4 (React Native)"
-        originWhitelist={['*']}
-        onMessage={onWebViewMessage}
-      />
+        styleURL={MAPBOX_STYLE_URL}
+        preferredFramesPerSecond={60}
+        compassEnabled
+        compassFadeWhenNorth
+        scaleBarEnabled={false}
+        onPress={handleMapPress}
+        onMapIdle={handleMapIdle}
+      >
+        <MapboxCamera
+          ref={cameraRef}
+          defaultSettings={{
+            centerCoordinate: INITIAL_MAP_CENTER,
+            zoomLevel: 9,
+          }}
+        />
+        {!!loc && !!MapboxLocationPuck && (
+          <MapboxLocationPuck
+            puckBearing="heading"
+            puckBearingEnabled
+            pulsing={{ isEnabled: true, color: C.teal, radius: 'accuracy' }}
+          />
+        )}
+        <MapboxShapeSource
+          ref={shapeSourceRef}
+          id={PUBS_SOURCE_ID}
+          shape={pubsShape}
+          cluster
+          clusterRadius={42}
+          clusterMaxZoomLevel={13}
+          hitbox={{ width: 24, height: 24 }}
+          onPress={handleSourcePress}
+        >
+          <MapboxCircleLayer
+            id="pubs-clusters"
+            filter={['has', 'point_count']}
+            style={mapLayerStyles.clusterCircles}
+          />
+          <MapboxSymbolLayer
+            id="pubs-cluster-counts"
+            filter={['has', 'point_count']}
+            style={mapLayerStyles.clusterLabels}
+          />
+          <MapboxCircleLayer
+            id="pubs-points"
+            filter={['!', ['has', 'point_count']]}
+            style={mapLayerStyles.pubs}
+          />
+        </MapboxShapeSource>
+        {selectedPubShape && (
+          <MapboxShapeSource id={SELECTED_PUB_SOURCE_ID} shape={selectedPubShape}>
+            <MapboxCircleLayer id="selected-pub-point" style={mapLayerStyles.selectedPub} />
+          </MapboxShapeSource>
+        )}
+      </MapboxMapView>
 
       {/* HUD */}
       <View style={s.mapHud}>
@@ -1085,7 +1149,12 @@ const MapScreen = ({ user }) => {
       <View style={s.mapCtrl}>
         <TouchableOpacity style={s.mapBtn} onPress={()=>{
           if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
-          sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
+          cameraRef.current?.setCamera({
+            centerCoordinate: [loc.longitude, loc.latitude],
+            zoomLevel: 14,
+            animationDuration: 800,
+            animationMode: 'flyTo',
+          });
         }}>
           <Ionicons name="locate-outline" size={22} color={C.amber}/>
         </TouchableOpacity>
@@ -1193,7 +1262,7 @@ const MapScreen = ({ user }) => {
           }}/>
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
-      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={loadData} userId={user.id} />}
+      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
     </View>
   );
