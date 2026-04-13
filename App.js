@@ -12,7 +12,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import * as MapLibreGL from '@maplibre/maplibre-react-native';
+import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
@@ -24,7 +24,137 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://fluffini.cz/api';
 
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ';
-const MAPBOX_STYLE = `https://api.mapbox.com/styles/v1/thisik/cmnwu4fxv003p01s731x1b5wx?access_token=${MAPBOX_TOKEN}`;
+const MAPBOX_STYLE = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
+
+// ─── MAPBOX GL JS HTML (WebView) ──────────────────────────────────────────────
+const MAP_HTML = `<!DOCTYPE html>
+<html><head>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"><\/script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body,#map{width:100%;height:100vh;overflow:hidden}
+  </style>
+</head><body><div id="map"></div><script>
+  mapboxgl.accessToken='${MAPBOX_TOKEN}';
+
+  // Nakreslí pin ikonu na canvas pro Mapbox addImage()
+  function drawPinIcon(visited) {
+    var W=34, H=46;
+    var canvas=document.createElement('canvas');
+    canvas.width=W; canvas.height=H;
+    var c=canvas.getContext('2d');
+    var accent=visited?'#27AE60':'#F5A623';
+    var accentDark=visited?'#1e8449':'#C07D10';
+    var cx=W/2, r=W/2-2, cy=r+2, tipY=H-3;
+    var alpha=Math.asin(r/(tipY-cy));
+    var rA=Math.PI/2-alpha, lA=Math.PI/2+alpha;
+
+    // Stín
+    c.save();
+    c.shadowColor=accentDark; c.shadowBlur=8; c.shadowOffsetY=2;
+    // Tělo pinu
+    c.beginPath();
+    c.arc(cx,cy,r,rA,lA,true);
+    c.lineTo(cx,tipY);
+    c.closePath();
+    c.fillStyle='#1A1200';
+    c.fill();
+    c.restore();
+
+    // Ohraničení
+    c.beginPath();
+    c.arc(cx,cy,r,rA,lA,true);
+    c.lineTo(cx,tipY);
+    c.closePath();
+    c.strokeStyle=accent; c.lineWidth=2.2; c.stroke();
+
+    // Vnitřní záře
+    c.beginPath(); c.arc(cx,cy,r-5,0,Math.PI*2);
+    c.fillStyle=accent+'20'; c.fill();
+
+    if(!visited){
+      // Pivní džbán
+      var bx=cx-6.5, by=cy-5.5, bw=11, bh=9;
+      c.lineCap='round'; c.lineJoin='round';
+      // Pěna (nafouklé kopečky nahoře)
+      c.fillStyle=accent;
+      c.beginPath();
+      c.arc(bx+2.2,by,2.3,Math.PI,0);
+      c.arc(bx+5.5,by-0.8,2.5,Math.PI,0);
+      c.arc(bx+8.8,by,2.3,Math.PI,0);
+      c.closePath(); c.fill();
+      // Tělo džbánu
+      c.strokeStyle=accent; c.fillStyle='transparent'; c.lineWidth=1.6;
+      c.beginPath(); c.rect(bx,by,bw,bh); c.stroke();
+      // Ucho
+      c.beginPath();
+      c.moveTo(bx+bw,by+bh*0.22);
+      c.quadraticCurveTo(bx+bw+5.5,by+bh*0.22,bx+bw+5.5,by+bh*0.5);
+      c.quadraticCurveTo(bx+bw+5.5,by+bh*0.78,bx+bw,by+bh*0.78);
+      c.stroke();
+      // Linka uprostřed džbánu (pivo + pěna oddíl)
+      c.beginPath(); c.moveTo(bx+1,by+3); c.lineTo(bx+bw-1,by+3);
+      c.strokeStyle=accent+'80'; c.lineWidth=1; c.stroke();
+    } else {
+      // Fajfka pro navštívené
+      c.beginPath();
+      c.moveTo(cx-6,cy+2); c.lineTo(cx-1,cy+7); c.lineTo(cx+7,cy-5);
+      c.strokeStyle=accent; c.lineWidth=2.8;
+      c.lineCap='round'; c.lineJoin='round'; c.stroke();
+      // Malý kroužek
+      c.beginPath(); c.arc(cx,cy,r-5,0,Math.PI*2);
+      c.strokeStyle=accent+'50'; c.lineWidth=1; c.stroke();
+    }
+    return c.getImageData(0,0,W,H);
+  }
+
+  var map=new mapboxgl.Map({
+    container:'map',
+    style:'${MAPBOX_STYLE}',
+    center:[13.3736,49.7384],
+    zoom:9,
+    attributionControl:false
+  });
+  function postRN(m){if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify(m));}
+  map.on('load',function(){
+    map.addImage('pin-u',drawPinIcon(false));
+    map.addImage('pin-v',drawPinIcon(true));
+    map.addSource('pubs',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'pubs-layer',type:'symbol',source:'pubs',layout:{
+      'icon-image':['case',['==',['get','visited'],1],'pin-v','pin-u'],
+      'icon-size':1,
+      'icon-anchor':'bottom',
+      'icon-allow-overlap':true,
+      'icon-ignore-placement':true
+    }});
+    map.on('click','pubs-layer',function(e){
+      if(e.features&&e.features[0])postRN({type:'pubTap',id:e.features[0].properties.id});
+    });
+    map.on('click',function(e){
+      var fs=map.queryRenderedFeatures(e.point,{layers:['pubs-layer']});
+      if(!fs||!fs.length) postRN({type:'mapClick',lat:e.lngLat.lat,lng:e.lngLat.lng});
+    });
+    map.on('moveend',function(){var c=map.getCenter();postRN({type:'centerChanged',lat:c.lat,lng:c.lng});});
+    postRN({type:'ready'});
+  });
+  function handle(e){
+    var msg;try{msg=JSON.parse(e.data);}catch(err){return;}
+    if(msg.type==='pubs'){
+      var src=map.getSource('pubs'); if(!src) return;
+      src.setData({type:'FeatureCollection',features:msg.pubs.map(function(p){
+        return{type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},properties:{id:p.id,visited:p.v?1:0}};
+      })});
+    }else if(msg.type==='flyTo'){
+      map.flyTo({center:[msg.lng,msg.lat],zoom:msg.zoom||14});
+    }else if(msg.type==='getCenter'){
+      var c=map.getCenter(); postRN({type:'centerChanged',lat:c.lat,lng:c.lng});
+    }
+  }
+  document.addEventListener('message',handle);
+  window.addEventListener('message',handle);
+<\/script></body></html>`;
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
@@ -750,17 +880,18 @@ const ReportPubModal = ({ pub, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MAP SCREEN – MapLibreGL + Mapbox style
+// MAP SCREEN – WebView + Mapbox GL JS
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
-  const cameraRef          = useRef(null);
-  const hasCenteredRef     = useRef(false);
-  const suggestModeRef     = useRef(false);
+  const webViewRef      = useRef(null);
+  const hasCenteredRef  = useRef(false);
+  const suggestModeRef  = useRef(false);
 
   const [pubs, setPubs]                 = useState([]);
   const [visited, setVisited]           = useState(new Set());
   const [loc, setLoc]                   = useState(null);
   const [loading, setLoading]           = useState(true);
+  const [mapReady, setMapReady]         = useState(false);
   const [selPub, setSelPub]             = useState(null);
   const [showSheet, setShowSheet]       = useState(false);
   const [showInfo, setShowInfo]         = useState(false);
@@ -788,6 +919,12 @@ const MapScreen = ({ user }) => {
   },[filters]);
 
   useEffect(()=>{loadData();setupLoc();registerBackgroundFetch();},[]);
+
+  const sendToWebView = msg => {
+    webViewRef.current?.injectJavaScript(
+      `handle({data:${JSON.stringify(JSON.stringify(msg))}});true;`
+    );
+  };
 
   const loadData = async () => {
     try {
@@ -832,6 +969,7 @@ const MapScreen = ({ user }) => {
   };
 
   const filtered = useMemo(()=>pubs.filter(p=>{
+    if(p.is_active === false) return false;
     if(filters.visited==='visited'  &&!visited.has(p.id))return false;
     if(filters.visited==='unvisited'&& visited.has(p.id))return false;
     if(filters.types?.length>0&&!filters.types.includes(p.type))return false;
@@ -842,66 +980,51 @@ const MapScreen = ({ user }) => {
     return true;
   }),[pubs,visited,filters]);
 
-  const pubsGeojson = useMemo(() => ({
-    type: 'FeatureCollection',
-    features: filtered.map(p => ({
-      type: 'Feature',
-      id: String(p.id),
-      geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] },
-      properties: { id: p.id, visited: visited.has(p.id) ? 1 : 0 },
-    })),
-  }), [filtered, visited]);
-
-  // Fly to after user location is obtained (once)
   useEffect(()=>{
-    if(!loc||hasCenteredRef.current)return;
-    hasCenteredRef.current = true;
-    cameraRef.current?.setCamera({
-      centerCoordinate: [loc.longitude, loc.latitude],
-      zoomLevel: 14,
-      animationDuration: 800,
-    });
-  },[loc]);
+    if(!mapReady||pubs.length===0)return;
+    const data=filtered.map(p=>({id:p.id,lat:p.latitude,lng:p.longitude,v:visited.has(p.id)}));
+    sendToWebView({type:'pubs',pubs:data});
+  },[mapReady,filtered,visited]);
 
-  const checkArea = useCallback(async (lat, lng) => {
-    const offlineAreas = await getOfflineAreas();
-    let found = false;
-    let areaName = '';
-    for (const code of offlineAreas) {
-      const country = COUNTRIES.find(c => c.code === code);
-      if (country && lat >= country.bounds.minLat && lat <= country.bounds.maxLat &&
-          lng >= country.bounds.minLng && lng <= country.bounds.maxLng) {
-        found = true;
-        areaName = country.name;
-        break;
+  useEffect(()=>{
+    if(!mapReady||!loc||hasCenteredRef.current)return;
+    hasCenteredRef.current = true;
+    sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
+  },[mapReady,loc]);
+
+  const onWebViewMessage = e => {
+    const msg=JSON.parse(e.nativeEvent.data);
+    if(msg.type==='ready'){setMapReady(true);}
+    else if(msg.type==='pubTap'){const pub=pubs.find(p=>p.id===msg.id);if(pub)openPub(pub);}
+    else if(msg.type==='mapClick'){
+      if(suggestModeRef.current){
+        setSuggestCo({lat:msg.lat,lng:msg.lng});
+        setSuggestMod(true);
+        suggestModeRef.current=false;
+        setSuggestMode(false);
       }
     }
-    setShowAreaWarning(!found);
-    if (!found) setCurrentAreaName(areaName || 'této oblasti');
-    else setCurrentAreaName('');
-  }, []);
-
-  const handleRegionChange = useCallback(e => {
-    if (!e?.geometry?.coordinates) return;
-    const [lng, lat] = e.geometry.coordinates;
-    checkArea(lat, lng);
-  }, [checkArea]);
-
-  const handleMapPress = useCallback(e => {
-    if (!suggestModeRef.current) return;
-    const [lng, lat] = e.geometry.coordinates;
-    setSuggestCo({ lat, lng });
-    setSuggestMod(true);
-    suggestModeRef.current = false;
-    setSuggestMode(false);
-  }, []);
-
-  const handlePubTap = useCallback(e => {
-    const feature = e?.features?.[0];
-    if (!feature) return;
-    const pub = pubs.find(p => p.id === feature.properties.id);
-    if (pub) openPub(pub);
-  }, [pubs]);
+    else if(msg.type==='centerChanged'){
+      const checkArea = async () => {
+        const offlineAreas = await getOfflineAreas();
+        let found = false;
+        let areaName = '';
+        for (const code of offlineAreas) {
+          const country = COUNTRIES.find(c => c.code === code);
+          if (country && msg.lat >= country.bounds.minLat && msg.lat <= country.bounds.maxLat &&
+              msg.lng >= country.bounds.minLng && msg.lng <= country.bounds.maxLng) {
+            found = true;
+            areaName = country.name;
+            break;
+          }
+        }
+        setShowAreaWarning(!found);
+        if (!found) setCurrentAreaName(areaName || 'této oblasti');
+        else setCurrentAreaName('');
+      };
+      checkArea();
+    }
+  };
 
   const selPubDist = useMemo(()=>{
     if(!loc||!selPub)return null;
@@ -916,12 +1039,6 @@ const MapScreen = ({ user }) => {
     Animated.timing(slideAnim,{toValue:300,duration:200,useNativeDriver:true}).start(()=>{
       setShowSheet(false); setSelPub(null);
     });
-  };
-  const tryLog = pub => {
-    if(!loc){Alert.alert('GPS potřeba','Zapni polohu.');return;}
-    const d = hav(loc.latitude,loc.longitude,pub.latitude,pub.longitude);
-    if(d>25){Alert.alert('Příliš daleko',`Jsi ${Math.round(d)} m od hospůdky. Musíš být do 25 m.`);return;}
-    setLogModal(true);
   };
 
   if(loading) return <View style={s.center}><ActivityIndicator color={C.amber} size="large"/></View>;
@@ -941,42 +1058,16 @@ const MapScreen = ({ user }) => {
 
   return (
     <View style={{flex:1}}>
-      <MapLibreGL.MapView
+      <WebView
+        ref={webViewRef}
+        source={{html:MAP_HTML}}
         style={{flex:1}}
-        styleURL={MAPBOX_STYLE}
-        onPress={handleMapPress}
-        onRegionDidChange={handleRegionChange}
-        logoEnabled={false}
-        attributionEnabled={false}
-      >
-        <MapLibreGL.Camera
-          ref={cameraRef}
-          zoomLevel={9}
-          centerCoordinate={[13.3736, 49.7384]}
-        />
-        <MapLibreGL.ShapeSource id="pubs-source" shape={pubsGeojson} onPress={handlePubTap}>
-          <MapLibreGL.CircleLayer
-            id="pubs-unvisited"
-            filter={['==', ['get', 'visited'], 0]}
-            style={{
-              circleColor: '#F5A623',
-              circleRadius: 10,
-              circleStrokeWidth: 2,
-              circleStrokeColor: '#C07D10',
-            }}
-          />
-          <MapLibreGL.CircleLayer
-            id="pubs-visited"
-            filter={['==', ['get', 'visited'], 1]}
-            style={{
-              circleColor: '#27AE60',
-              circleRadius: 10,
-              circleStrokeWidth: 2,
-              circleStrokeColor: '#1e8449',
-            }}
-          />
-        </MapLibreGL.ShapeSource>
-      </MapLibreGL.MapView>
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        userAgent="Hospudkobrani/1.4 (React Native)"
+        originWhitelist={['*']}
+        onMessage={onWebViewMessage}
+      />
 
       {/* HUD */}
       <View style={s.mapHud}>
@@ -994,7 +1085,7 @@ const MapScreen = ({ user }) => {
       <View style={s.mapCtrl}>
         <TouchableOpacity style={s.mapBtn} onPress={()=>{
           if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
-          cameraRef.current?.setCamera({centerCoordinate:[loc.longitude,loc.latitude],zoomLevel:14,animationDuration:800});
+          sendToWebView({type:'flyTo',lat:loc.latitude,lng:loc.longitude,zoom:14});
         }}>
           <Ionicons name="locate-outline" size={22} color={C.amber}/>
         </TouchableOpacity>
