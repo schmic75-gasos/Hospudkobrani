@@ -18,6 +18,7 @@ import NetInfo from '@react-native-community/netinfo';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://hospudkobrani-8888.rostiapp.cz/api';
@@ -1103,6 +1104,7 @@ const MapScreen = ({ user }) => {
   const [suggestModal, setSuggestMod]   = useState(false);
   const [filters, setFilters]           = useState({...DEF_FILTERS});
   const [mockBlocked, setMockBlocked]   = useState(false);
+  const [adminMockBanner, setAdminMockBanner] = useState(false);
   const [showAreaWarning, setShowAreaWarning] = useState(false);
   const [currentAreaName, setCurrentAreaName] = useState('');
   const [viewport, setViewport]         = useState({ center: INITIAL_MAP_CENTER, zoom: 9 });
@@ -1189,7 +1191,7 @@ const MapScreen = ({ user }) => {
     const l = await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.High});
     if (l.mocked) {
       if (user.is_admin) {
-        Alert.alert('Mock poloha', 'Mock poloha je zapnutá. Pro testovací účely OK.');
+        setAdminMockBanner(true);
       } else {
         setMockBlocked(true);
         return;
@@ -1466,6 +1468,16 @@ const MapScreen = ({ user }) => {
           <Text style={{color:C.amber,fontSize:12,fontWeight:'700',flex:1}}>Klepni na mapu pro umístění návrhu</Text>
           <TouchableOpacity onPress={()=>{suggestModeRef.current=false;setSuggestMode(false);}}>
             <Ionicons name="close-circle" size={16} color={C.creamDim}/>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {adminMockBanner && (
+        <View style={s.mockAdminBanner}>
+          <Ionicons name="bug-outline" size={16} color={C.bg}/>
+          <Text style={s.mockAdminBannerT}>Mock poloha aktivní – testovací režim (admin)</Text>
+          <TouchableOpacity onPress={()=>setAdminMockBanner(false)} hitSlop={{top:8,bottom:8,left:8,right:8}}>
+            <Ionicons name="close" size={18} color={C.bg}/>
           </TouchableOpacity>
         </View>
       )}
@@ -2342,7 +2354,9 @@ const ActivityCalendar = () => {
   const daysInMonth = new Date(year, month, 0).getDate();
   const startOffset = (new Date(year, month - 1, 1).getDay() + 6) % 7;
   const monthName = new Date(year, month - 1).toLocaleString('cs-CZ', { month: 'long' });
-  const dayW = (SW - 32 - 12) / 7;
+  // Přesný výpočet: karta má margin:16 (→ -32) a padding:14 (→ -28) = SW-60, pak ÷7
+  const cellW = Math.floor((SW - 60) / 7);
+  const numRows = Math.ceil((startOffset + daysInMonth) / 7);
 
   return (
     <View style={{margin:16,backgroundColor:C.bgCard,borderRadius:16,padding:14,borderWidth:1,borderColor:C.border}}>
@@ -2353,25 +2367,35 @@ const ActivityCalendar = () => {
         <TouchableOpacity onPress={nextMonth}><Ionicons name="chevron-forward" size={20} color={C.amber}/></TouchableOpacity>
       </View>
       {loading ? <ActivityIndicator color={C.amber} style={{marginVertical:10}}/> : (
-        <View style={{flexDirection:'row',flexWrap:'wrap'}}>
-          {['Po','Út','St','Čt','Pá','So','Ne'].map(d=>(
-            <Text key={d} style={{width:dayW,textAlign:'center',color:C.creamDim,fontSize:10,marginBottom:4,fontWeight:'600'}}>{d}</Text>
+        <View>
+          {/* Záhlaví dnů týdne */}
+          <View style={{flexDirection:'row',marginBottom:6}}>
+            {['Po','Út','St','Čt','Pá','So','Ne'].map(d=>(
+              <Text key={d} style={{width:cellW,textAlign:'center',color:C.creamDim,fontSize:10,fontWeight:'700'}}>{d}</Text>
+            ))}
+          </View>
+          {/* Týdenní řádky */}
+          {Array.from({length:numRows},(_,r)=>(
+            <View key={r} style={{flexDirection:'row',marginBottom:3}}>
+              {Array.from({length:7},(_,c)=>{
+                const idx = r*7+c;
+                const day = idx - startOffset + 1;
+                if(day<1||day>daysInMonth) return <View key={c} style={{width:cellW,height:cellW}}/>;
+                const isActive = active.has(day);
+                const isToday  = year===now.getFullYear()&&month===now.getMonth()+1&&day===now.getDate();
+                return (
+                  <View key={c} style={{width:cellW,height:cellW,alignItems:'center',justifyContent:'center'}}>
+                    <View style={{width:cellW-5,height:cellW-5,borderRadius:(cellW-5)/2,
+                      backgroundColor:isActive?C.amber:'transparent',
+                      borderWidth:isToday?1.5:0,borderColor:C.teal,
+                      alignItems:'center',justifyContent:'center'}}>
+                      <Text style={{color:isActive?C.bg:isToday?C.teal:C.creamDim,fontSize:11,fontWeight:isActive||isToday?'800':'400'}}>{day}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
           ))}
-          {Array(startOffset).fill(null).map((_,i)=>(
-            <View key={`e${i}`} style={{width:dayW,height:dayW}}/>
-          ))}
-          {Array.from({length:daysInMonth},(_,i)=>i+1).map(day=>{
-            const isActive = active.has(day);
-            const isToday  = year===now.getFullYear() && month===now.getMonth()+1 && day===now.getDate();
-            return (
-              <View key={day} style={{width:dayW,height:dayW,alignItems:'center',justifyContent:'center',marginBottom:2}}>
-                <View style={{width:dayW-4,height:dayW-4,borderRadius:(dayW-4)/2,backgroundColor:isActive?C.amber:'transparent',
-                  borderWidth:isToday?1.5:0,borderColor:C.teal,alignItems:'center',justifyContent:'center'}}>
-                  <Text style={{color:isActive?C.bg:C.creamDim,fontSize:11,fontWeight:isActive?'800':'400'}}>{day}</Text>
-                </View>
-              </View>
-            );
-          })}
         </View>
       )}
     </View>
@@ -2557,24 +2581,22 @@ const ProfileScreen = ({ user, onLogout }) => {
       </View>
 
       {/* Stats */}
-      {stats&&(
-        <View style={s.statsGrid}>
-          {[
-            ['beer-outline',   stats.total_visits,              'hospůdek',      C.amber],
-            ['star-outline',   stats.avg_rating?.toFixed(1),    'průměr ★',      C.star],
-            ['ribbon-outline', stats.firstlast_count,           'prvochlasty',   C.purple],
-            ['trophy-outline', stats.challenges_done,           'výzev',         C.gold],
-            ['walk-outline',   stats.unique_pubs,               'unikátní',      C.teal],
-            ['flame-outline',  stats.streak_days ?? '–',        'dní streak',    C.red],
-          ].map(([icon,val,label,color],i)=>(
-            <View key={i} style={s.statsGridItem}>
-              <Ionicons name={icon} size={22} color={color} style={{marginBottom:4}}/>
-              <Text style={[s.statsGridNum,{color}]}>{val??'–'}</Text>
-              <Text style={s.statsGridLabel}>{label}</Text>
-            </View>
-          ))}
-        </View>
-      )}
+      <View style={s.statsGrid}>
+        {[
+          ['beer-outline',   stats?.total_visits,              'hospůdek',      C.amber],
+          ['star-outline',   stats?.avg_rating?.toFixed(1),    'průměr ★',      C.star],
+          ['ribbon-outline', stats?.firstlast_count,           'prvochlasty',   C.purple],
+          ['trophy-outline', stats?.challenges_done,           'výzev',         C.gold],
+          ['walk-outline',   stats?.unique_pubs,               'unikátní',      C.teal],
+          ['flame-outline',  stats?.streak_days,               'dní streak',    C.red],
+        ].map(([icon,val,label,color],i)=>(
+          <View key={i} style={s.statsGridItem}>
+            <Ionicons name={icon} size={22} color={color} style={{marginBottom:4}}/>
+            <Text style={[s.statsGridNum,{color}]}>{!stats ? '…' : (val??'–')}</Text>
+            <Text style={s.statsGridLabel}>{label}</Text>
+          </View>
+        ))}
+      </View>
 
       {/* My photos with like counts + private indicator */}
       {photos.length>0&&(
@@ -2632,7 +2654,7 @@ const ProfileScreen = ({ user, onLogout }) => {
       </View>
 
       {/* Verze + sociální sítě */}
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.0</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.1</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
@@ -2956,7 +2978,10 @@ const s = StyleSheet.create({
   areaWarningText: {color:C.cream,fontSize:12,fontWeight:'600',flex:1},
 
   // Mock overlay
-  mockOverlay: {flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center',padding:32},
-  mockTitle: {color:C.red,fontSize:20,fontWeight:'900',marginTop:16,marginBottom:8},
-  mockText: {color:C.creamDim,fontSize:14,textAlign:'center',marginBottom:24},
+  mockOverlay: {flex:1,backgroundColor:C.bg,alignItems:'center',justifyContent:'center',padding:36,overflow:'hidden'},
+  mockIconWrap: {width:100,height:100,borderRadius:50,backgroundColor:'rgba(200,40,40,0.15)',alignItems:'center',justifyContent:'center',marginBottom:8,borderWidth:1,borderColor:'rgba(200,40,40,0.35)'},
+  mockTitle: {color:C.red,fontSize:24,fontWeight:'900',marginTop:8,marginBottom:12,letterSpacing:0.3},
+  mockText: {color:C.creamDim,fontSize:15,textAlign:'center',marginBottom:28,lineHeight:22},
+  mockAdminBanner: {position:'absolute',top:0,left:0,right:0,backgroundColor:C.amber,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:8,gap:8,zIndex:999},
+  mockAdminBannerT: {color:C.bg,fontSize:13,fontWeight:'700',flex:1},
 });
