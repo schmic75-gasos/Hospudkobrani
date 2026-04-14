@@ -1,13 +1,13 @@
 /**
- * Hospůdkobraní – App.js v1.3.0
- * Nové funkce: mock detekce, verze datasetů, notifikace, lajky všude, alert pro oblast
+ * Hospůdkobraní – App.js v1.4.0
+ * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Image, ActivityIndicator, FlatList, Dimensions,
   Platform, StatusBar, Animated, KeyboardAvoidingView, RefreshControl,
-  Linking, SafeAreaView, AppState,
+  Linking, SafeAreaView, AppState, Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -20,7 +20,7 @@ import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 
 const { width: SW, height: SH } = Dimensions.get('window');
-const API = 'https://fluffini.cz/api';
+const API = 'https://hospudkobrani-8888.rostiapp.cz/api';
 
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ';
 const MAPBOX_STYLE_URL = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
@@ -47,6 +47,7 @@ const MapboxShapeSource = MAPBOX_SDK?.ShapeSource;
 const MapboxCircleLayer = MAPBOX_SDK?.CircleLayer;
 const MapboxSymbolLayer = MAPBOX_SDK?.SymbolLayer;
 const MapboxLocationPuck = MAPBOX_SDK?.LocationPuck;
+const MapboxLineLayer = MAPBOX_SDK?.LineLayer;
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
@@ -341,10 +342,11 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
 // PUB DETAIL MODAL (with likes on photos)
 // ══════════════════════════════════════════════════════════════════════════════
 const PubDetailModal = ({ pub, onClose, userId }) => {
-  const [reviews, setReviews] = useState([]);
-  const [photos, setPhotos]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [pv, setPv] = useState(null);
+  const [reviews, setReviews]     = useState([]);
+  const [photos, setPhotos]       = useState([]);
+  const [firstlasts, setFirstlasts] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [pv, setPv]               = useState(null);
   const [userModal, setUserModal] = useState(null);
   const [reportMod, setReportMod] = useState(false);
 
@@ -352,11 +354,19 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
     Promise.all([
       apiFetch(`/pubs/${pub.id}/reviews`).catch(()=>[]),
       apiFetch(`/pubs/${pub.id}/photos`).catch(()=>[]),
-    ]).then(([r,p])=>{ setReviews(r); setPhotos(p); setLoading(false); });
+      apiFetch(`/pubs/${pub.id}/firstlasts`).catch(()=>[]),
+    ]).then(([r,p,fl])=>{ setReviews(r); setPhotos(p); setFirstlasts(fl); setLoading(false); });
   },[pub.id]);
 
   const handleLikeUpdate = (photoId, liked, likeCount) => {
     setPhotos(prev => prev.map(p => p.id === photoId ? {...p, liked, like_count: likeCount} : p));
+  };
+
+  const sharePub = () => {
+    Share.share({
+      message: `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!\nhttps://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`,
+      title: pub.name,
+    }).catch(()=>{});
   };
 
   return (
@@ -366,6 +376,9 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
           <View style={s.modalHeader}>
             <Text style={s.modalTitle}>{pub.name}</Text>
             <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+              <TouchableOpacity onPress={sharePub}>
+                <Ionicons name="share-outline" size={19} color={C.creamDim}/>
+              </TouchableOpacity>
               <TouchableOpacity onPress={()=>setReportMod(true)}>
                 <Ionicons name="flag-outline" size={19} color={C.creamDim}/>
               </TouchableOpacity>
@@ -444,6 +457,21 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
                     </ScrollView>
                   </View>
                 )}
+                {firstlasts.length>0 && (
+                  <View style={{marginTop:14}}>
+                    <Text style={s.secLabel}>Prvochlasté 🎖</Text>
+                    {firstlasts.map((fl,i)=>(
+                      <View key={i} style={{flexDirection:'row',alignItems:'center',gap:8,marginBottom:6,backgroundColor:C.bgCardAlt,borderRadius:10,padding:8,borderWidth:1,borderColor:fl.is_this_year?C.purple:C.border}}>
+                        <Ionicons name="ribbon-outline" size={16} color={fl.is_this_year?C.purple:C.creamDim}/>
+                        <Text style={{color:fl.is_this_year?C.purple:C.amber,fontWeight:'800',fontSize:14}}>{fl.year}</Text>
+                        <TouchableOpacity onPress={()=>setUserModal(fl.username)} style={{flex:1}}>
+                          <Text style={{color:C.cream,textDecorationLine:'underline',fontWeight:'600'}}>{fl.username}</Text>
+                        </TouchableOpacity>
+                        {fl.is_this_year && <Chip label="Letos!" color={C.green}/>}
+                      </View>
+                    ))}
+                  </View>
+                )}
                 <View style={{marginTop:14}}>
                   <Text style={s.secLabel}>Hodnocení Hospůdkobraníků {reviews.length>0?`(${reviews.length})`:''}</Text>
                   {reviews.length===0 && <Text style={s.dimText}>Zatím žádné hodnocení. Buď první!</Text>}
@@ -481,6 +509,43 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 const PUB_TYPES = ['hospoda','restaurace','hostinec','kiosek','jiné'];
 const DEF_FILTERS = { visited:'all', types:[], card:'any', minRating:0, beer:'' };
+
+// ─── GRAPHHOPPER ──────────────────────────────────────────────────────────────
+const GRAPHHOPPER_KEY = '5e74a4a1-54f4-456b-8e4f-e12a18a15b16';
+const decodePoly = (encoded) => {
+  const coords = []; let idx = 0, lat = 0, lng = 0;
+  while (idx < encoded.length) {
+    let b, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(idx++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(idx++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lng / 1e5, lat / 1e5]);
+  }
+  return coords;
+};
+const fetchGHRoute = async (waypoints, profile = 'foot') => {
+  const pts = waypoints.map(p => `point=${p.lat},${p.lng}`).join('&');
+  const url = `https://graphhopper.com/api/1/route?${pts}&profile=${profile}&locale=cs&calc_points=true&points_encoded=true&key=${GRAPHHOPPER_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Nelze naplánovat trasu');
+  const data = await res.json();
+  if (!data.paths?.length) throw new Error('Trasa nenalezena');
+  const path = data.paths[0];
+  return { coords: decodePoly(path.points), distance: path.distance, duration: Math.round(path.time / 60000) };
+};
+
+// ─── TRANSPORT MODES ─────────────────────────────────────────────────────────
+const TRANSPORT_MODES = [
+  { id: 'walk',  icon: 'walk-outline',       label: 'Pěšky',     gh: 'foot' },
+  { id: 'bike',  icon: 'bicycle-outline',    label: 'Kolo',      gh: 'bike' },
+  { id: 'car',   icon: 'car-outline',        label: 'Autem',     gh: 'car' },
+  { id: 'ebike', icon: 'flash-outline',      label: 'E-kolo',    gh: 'bike' },
+  { id: 'bus',   icon: 'bus-outline',        label: 'Busem',     gh: 'foot' },
+  { id: 'moto',  icon: 'speedometer-outline',label: 'Moto',      gh: 'car' },
+  { id: 'other', icon: 'ellipsis-horizontal-outline', label: 'Jinak', gh: 'foot' },
+];
 
 const FilterModal = ({ filters, onApply, onClose }) => {
   const [f, setF] = useState({...filters});
@@ -611,7 +676,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
               [country.bounds.maxLng, country.bounds.maxLat]
             ],
             minZoom: 5,
-            maxZoom: 14,
+            maxZoom: 16,
           });
         }
       }
@@ -862,6 +927,157 @@ const ReportPubModal = ({ pub, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ROUTING MODAL (GraphHopper)
+// ══════════════════════════════════════════════════════════════════════════════
+const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
+  const [waypoints, setWaypoints] = useState([
+    userLoc ? { label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude } : null,
+    null
+  ]);
+  const [profile, setProfile]   = useState('walk');
+  const [calculating, setCalc]  = useState(false);
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
+
+  const setWp = (idx, wp) => setWaypoints(prev => { const n=[...prev]; n[idx]=wp; return n; });
+  const addWp = () => setWaypoints(prev => [...prev, null]);
+  const removeWp = idx => setWaypoints(prev => prev.filter((_,i)=>i!==idx));
+  const useMyLoc = idx => {
+    if (!userLoc) { Alert.alert('Bez GPS','Poloha není dostupná.'); return; }
+    setWp(idx, { label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude });
+  };
+
+  const calculate = async () => {
+    const filled = waypoints.filter(Boolean);
+    if (filled.length < 2) { Alert.alert('Chybí body','Zvol alespoň start a cíl.'); return; }
+    setCalc(true);
+    try {
+      const ghProfile = TRANSPORT_MODES.find(m=>m.id===profile)?.gh || 'foot';
+      const result = await fetchGHRoute(filled, ghProfile);
+      setRouteInfo(result);
+      onRouteReady(result);
+    } catch(e) { Alert.alert('Chyba trasování', e.message); }
+    setCalc(false);
+  };
+
+  const clearRoute = () => { setRouteInfo(null); onRouteReady(null); };
+
+  const GH_PROFILES = TRANSPORT_MODES;
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard,{maxHeight:SH*0.82}]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Naplánovat trasu</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            {/* Waypoints */}
+            {waypoints.map((wp, idx) => (
+              <View key={idx} style={{flexDirection:'row',alignItems:'center',gap:8,marginBottom:10}}>
+                <View style={{width:26,height:26,borderRadius:13,backgroundColor:idx===0?C.teal:idx===waypoints.length-1?C.amber:C.purple,alignItems:'center',justifyContent:'center'}}>
+                  <Text style={{color:C.bg,fontWeight:'900',fontSize:11}}>{idx===0?'A':idx===waypoints.length-1?'B':String.fromCharCode(65+idx)}</Text>
+                </View>
+                <TouchableOpacity style={[s.input,{flex:1,marginBottom:0,minHeight:42,justifyContent:'center'}]}
+                  onPress={()=>setPubPicker(idx)}>
+                  <Text style={{color:wp?C.cream:C.creamDim,fontSize:14}} numberOfLines={1}>
+                    {wp ? wp.label : 'Vybrat hospůdku…'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={()=>useMyLoc(idx)} style={{padding:8,backgroundColor:C.bgCardAlt,borderRadius:10,borderWidth:1,borderColor:C.border}}>
+                  <Ionicons name="locate-outline" size={18} color={C.teal}/>
+                </TouchableOpacity>
+                {waypoints.length>2&&idx>0&&idx<waypoints.length-1 && (
+                  <TouchableOpacity onPress={()=>removeWp(idx)}>
+                    <Ionicons name="close-circle" size={20} color={C.red}/>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <TouchableOpacity style={[s.btnSec,{marginBottom:12,flexDirection:'row',gap:6,justifyContent:'center'}]} onPress={addWp}>
+              <Ionicons name="add-circle-outline" size={18} color={C.amber}/>
+              <Text style={{color:C.amber,fontWeight:'700'}}>Přidat zastávku</Text>
+            </TouchableOpacity>
+
+            {/* Profil (způsob dopravy) */}
+            <Text style={s.secLabel}>Způsob dopravy</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}>
+              {GH_PROFILES.map(m=>(
+                <TouchableOpacity key={m.id} style={{alignItems:'center',marginRight:14}} onPress={()=>setProfile(m.id)}>
+                  <View style={{width:50,height:50,borderRadius:25,alignItems:'center',justifyContent:'center',
+                    backgroundColor:profile===m.id?C.amber:C.bgCardAlt,
+                    borderWidth:2,borderColor:profile===m.id?C.amber:C.border}}>
+                    <Ionicons name={m.icon} size={22} color={profile===m.id?C.bg:C.creamDim}/>
+                  </View>
+                  <Text style={{color:profile===m.id?C.amber:C.creamDim,fontSize:11,marginTop:4,fontWeight:profile===m.id?'700':'400'}}>{m.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Route info */}
+            {routeInfo && (
+              <View style={{backgroundColor:C.bgCardAlt,borderRadius:14,padding:12,marginBottom:12,borderWidth:1,borderColor:C.teal,flexDirection:'row',gap:16,alignItems:'center'}}>
+                <View style={{flex:1}}>
+                  <Text style={{color:C.teal,fontWeight:'800',fontSize:15}}>{routeInfo.distance>=1000?`${(routeInfo.distance/1000).toFixed(1)} km`:`${Math.round(routeInfo.distance)} m`}</Text>
+                  <Text style={s.dimText}>≈ {routeInfo.duration} min</Text>
+                </View>
+                <TouchableOpacity onPress={clearRoute}>
+                  <Ionicons name="close-circle-outline" size={22} color={C.red}/>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={{flexDirection:'row',gap:8}}>
+              {routeInfo && (
+                <TouchableOpacity style={[s.btnSec,{flex:1,justifyContent:'center'}]} onPress={clearRoute}>
+                  <Text style={{color:C.creamDim,textAlign:'center',fontWeight:'600'}}>Smazat trasu</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[s.btnPri,{flex:1}]} onPress={calculate} disabled={calculating}>
+                {calculating
+                  ? <ActivityIndicator color={C.bg}/>
+                  : <><Ionicons name="navigate-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Naplánovat</Text></>
+                }
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+
+      {/* Pub picker */}
+      {pubPicker!==null && (
+        <Modal visible animationType="slide" transparent>
+          <View style={s.modalOverlay}>
+            <View style={[s.modalCard,{maxHeight:SH*0.7}]}>
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Vybrat hospůdku</Text>
+                <TouchableOpacity onPress={()=>setPubPicker(null)}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+              </View>
+              <FlatList
+                data={pubs.filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude))}
+                keyExtractor={p=>String(p.id)}
+                renderItem={({item})=>(
+                  <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
+                    onPress={()=>{ setWp(pubPicker,{label:item.name, lat:item.latitude, lng:item.longitude}); setPubPicker(null); }}>
+                    <Ionicons name="beer-outline" size={18} color={C.amber} style={{marginRight:8}}/>
+                    <View style={{flex:1}}>
+                      <Text style={{color:C.cream,fontWeight:'700'}}>{item.name}</Text>
+                      <Text style={s.dimText}>{item.type}</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                contentContainerStyle={{padding:8}}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAP SCREEN – WebView + Mapbox GL JS
 // ══════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ user }) => {
@@ -890,6 +1106,8 @@ const MapScreen = ({ user }) => {
   const [showAreaWarning, setShowAreaWarning] = useState(false);
   const [currentAreaName, setCurrentAreaName] = useState('');
   const [viewport, setViewport]         = useState({ center: INITIAL_MAP_CENTER, zoom: 9 });
+  const [routeShape, setRouteShape]     = useState(null);
+  const [routingMod, setRoutingMod]     = useState(false);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -1190,6 +1408,11 @@ const MapScreen = ({ user }) => {
             <MapboxCircleLayer id="selected-pub-point" style={mapLayerStyles.selectedPub} />
           </MapboxShapeSource>
         )}
+        {routeShape && MapboxLineLayer && (
+          <MapboxShapeSource id="route-source" shape={routeShape}>
+            <MapboxLineLayer id="route-line" style={{lineColor:C.teal,lineWidth:4,lineOpacity:0.9,lineCap:'round',lineJoin:'round'}}/>
+          </MapboxShapeSource>
+        )}
       </MapboxMapView>
 
       {/* HUD */}
@@ -1231,6 +1454,9 @@ const MapScreen = ({ user }) => {
             setSuggestMode(next);
           }}>
           <Ionicons name="add-outline" size={24} color={suggestMode?C.amber:C.creamDim}/>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.mapBtn,routeShape&&{borderColor:C.teal,borderWidth:2}]} onPress={()=>setRoutingMod(true)}>
+          <Ionicons name="navigate-outline" size={22} color={routeShape?C.teal:C.creamDim}/>
         </TouchableOpacity>
       </View>
 
@@ -1323,6 +1549,21 @@ const MapScreen = ({ user }) => {
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
       {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
+      {routingMod&&<RoutingModal pubs={pubs} userLoc={loc}
+        onRouteReady={(result)=>{
+          if (!result) { setRouteShape(null); return; }
+          setRouteShape({ type:'Feature', geometry:{ type:'LineString', coordinates:result.coords } });
+          if (result.coords.length > 1) {
+            const lngs = result.coords.map(c=>c[0]);
+            const lats = result.coords.map(c=>c[1]);
+            cameraRef.current?.fitBounds(
+              [Math.min(...lngs), Math.min(...lats)],
+              [Math.max(...lngs), Math.max(...lats)],
+              [80,80,80,80], 600
+            );
+          }
+        }}
+        onClose={()=>setRoutingMod(false)}/>}
     </View>
   );
 };
@@ -1339,6 +1580,7 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
   const [noteViz, setNoteViz]   = useState('public');
   const [photos, setPhotos]     = useState([]);
   const [photosViz, setPhotosViz] = useState('public');
+  const [transport, setTransport] = useState('walk');
   const [loading, setLoading]   = useState(true);
   const [busy, setBusy]         = useState(false);
   const [online, setOnline]     = useState(true);
@@ -1359,7 +1601,7 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
     if(q&&!ans){Alert.alert('Odpověz na otázku!');return;}
     if(rating===0){Alert.alert('Dej hodnocení!');return;}
     setBusy(true);
-    const payload={pub_id:pub.id,answer_id:ans,rating,note,note_visibility:noteViz,photo_visibility:photosViz,logged_at:new Date().toISOString()};
+    const payload={pub_id:pub.id,answer_id:ans,rating,note,note_visibility:noteViz,photo_visibility:photosViz,travel_mode:transport,logged_at:new Date().toISOString()};
     try{
       let response;
       if(online){
@@ -1420,6 +1662,19 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
                     <View style={{flexDirection:'row',justifyContent:'center',marginVertical:16}}>
                       <Stars rating={rating} size={36} interactive onRate={setRating}/>
                     </View>
+                    <Text style={s.secLabel}>Způsob dopravy</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}>
+                      {TRANSPORT_MODES.map(m=>(
+                        <TouchableOpacity key={m.id} style={{alignItems:'center',marginRight:14}} onPress={()=>setTransport(m.id)}>
+                          <View style={{width:52,height:52,borderRadius:26,alignItems:'center',justifyContent:'center',
+                            backgroundColor:transport===m.id?C.amber:C.bgCardAlt,
+                            borderWidth:2,borderColor:transport===m.id?C.amber:C.border}}>
+                            <Ionicons name={m.icon} size={24} color={transport===m.id?C.bg:C.creamDim}/>
+                          </View>
+                          <Text style={{color:transport===m.id?C.amber:C.creamDim,fontSize:11,marginTop:4,fontWeight:transport===m.id?'700':'400'}}>{m.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
                     <Text style={s.secLabel}>Poznámka (volitelné)</Text>
                     <TextInput style={[s.input,{minHeight:70,textAlignVertical:'top'}]}
                       placeholder="Jak ses měl(a)?" placeholderTextColor={C.creamDim}
@@ -1470,6 +1725,50 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// CHANGE PASSWORD MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+const ChangePasswordModal = ({ onClose }) => {
+  const [oldPw, setOldPw]     = useState('');
+  const [newPw, setNewPw]     = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy]       = useState(false);
+
+  const submit = async () => {
+    if (!oldPw || !newPw || !confirm) { Alert.alert('Chybí údaje', 'Vyplň všechna pole.'); return; }
+    if (newPw !== confirm) { Alert.alert('Hesla se neshodují'); return; }
+    if (newPw.length < 6) { Alert.alert('Krátké heslo', 'Heslo musí mít alespoň 6 znaků.'); return; }
+    setBusy(true);
+    try {
+      await apiFetch('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPw, new_password: newPw }) });
+      Alert.alert('Hotovo ✓', 'Heslo bylo úspěšně změněno.');
+      onClose();
+    } catch(e) { Alert.alert('Chyba', e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Změnit heslo</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <TextInput style={s.input} placeholder="Současné heslo" placeholderTextColor={C.creamDim} value={oldPw} onChangeText={setOldPw} secureTextEntry/>
+            <TextInput style={s.input} placeholder="Nové heslo" placeholderTextColor={C.creamDim} value={newPw} onChangeText={setNewPw} secureTextEntry/>
+            <TextInput style={s.input} placeholder="Zopakuj nové heslo" placeholderTextColor={C.creamDim} value={confirm} onChangeText={setConfirm} secureTextEntry/>
+            <TouchableOpacity style={s.btnPri} onPress={submit} disabled={busy}>
+              {busy ? <ActivityIndicator color={C.bg}/> : <><Ionicons name="lock-closed-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Uložit nové heslo</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // AUTH SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
 const AuthScreen = ({ onLogin }) => {
@@ -1478,6 +1777,7 @@ const AuthScreen = ({ onLogin }) => {
   const [pw, setPw]       = useState('');
   const [nick, setNick]   = useState('');
   const [busy, setBusy]   = useState(false);
+  const [forgotMod, setForgotMod] = useState(false);
   const fa = useRef(new Animated.Value(0)).current;
   useEffect(()=>{ Animated.timing(fa,{toValue:1,duration:800,useNativeDriver:true}).start(); },[]);
 
@@ -1492,6 +1792,14 @@ const AuthScreen = ({ onLogin }) => {
       onLogin(data.user);
     }catch(e){Alert.alert('Chyba',e.message);}
     finally{setBusy(false);}
+  };
+
+  const sendForgotPw = async (forgotEmail) => {
+    if (!forgotEmail.trim()) { Alert.alert('Zadej e-mail'); return; }
+    try {
+      await apiFetch('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: forgotEmail }) });
+      Alert.alert('Odesláno ✓', 'Zkontroluj svůj e-mail – pošleme ti odkaz pro reset hesla.');
+    } catch(e) { Alert.alert('Chyba', e.message); }
   };
 
   return (
@@ -1519,11 +1827,47 @@ const AuthScreen = ({ onLogin }) => {
                 <Text style={s.btnPriT}>{mode==='login'?'Vstoupit do hospody':'Zaregistrovat se'}</Text>
               </>}
             </TouchableOpacity>
+            {mode==='login' && (
+              <TouchableOpacity style={{alignItems:'center',marginTop:12}} onPress={()=>setForgotMod(true)}>
+                <Text style={{color:C.amber,fontSize:13,textDecorationLine:'underline'}}>Zapomenuté heslo?</Text>
+              </TouchableOpacity>
+            )}
           </View>
           <Text style={s.authFooter}>Pij s rozumem, sbírej bez hranic</Text>
         </Animated.View>
       </LinearGradient>
+      {forgotMod && <ForgotPasswordModal onClose={()=>setForgotMod(false)} onSend={sendForgotPw}/>}
     </View>
+  );
+};
+
+const ForgotPasswordModal = ({ onClose, onSend }) => {
+  const [email, setEmail] = useState('');
+  const [busy, setBusy]   = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    await onSend(email);
+    setBusy(false);
+    onClose();
+  };
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Zapomenuté heslo</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <Text style={[s.dimText,{marginBottom:14}]}>Zadej svůj e-mail a pošleme ti odkaz pro reset hesla.</Text>
+            <TextInput style={s.input} placeholder="E-mail" placeholderTextColor={C.creamDim} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"/>
+            <TouchableOpacity style={s.btnPri} onPress={submit} disabled={busy}>
+              {busy?<ActivityIndicator color={C.bg}/>:<><Ionicons name="mail-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Odeslat reset</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 };
 
@@ -1568,7 +1912,10 @@ const VisitsScreen = ({ user }) => {
   const renderItem = ({item})=>(
     <TouchableOpacity style={s.visitCard} onPress={()=>openDetail(item)} activeOpacity={0.75}>
       <View style={{flexDirection:'row',alignItems:'flex-start',gap:10}}>
-        <View style={s.visitIcon}><Ionicons name="beer-outline" size={22} color={C.amber}/></View>
+        {item.pub_photo_url
+          ? <Image source={{uri:item.pub_photo_url}} style={{width:44,height:44,borderRadius:12}} resizeMode="cover"/>
+          : <View style={s.visitIcon}><Ionicons name="beer-outline" size={22} color={C.amber}/></View>
+        }
         <View style={{flex:1}}>
           <Text style={s.visitName}>{item.pub_name}</Text>
           <Text style={s.visitType}>{item.pub_type}</Text>
@@ -1969,6 +2316,69 @@ const CommunityScreen = ({ user }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ACTIVITY CALENDAR HEATMAP
+// ══════════════════════════════════════════════════════════════════════════════
+const ActivityCalendar = () => {
+  const now = new Date();
+  const [year, setYear]   = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [active, setActive] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    apiFetch(`/profile/activity?year=${year}&month=${month}`)
+      .then(res => {
+        // Server vrací {year, month, days: {"2026-04-01": count, ...}}
+        const daysObj = res?.days || {};
+        setActive(new Set(Object.keys(daysObj).map(d => new Date(d).getDate())));
+      })
+      .catch(() => setActive(new Set()))
+      .finally(() => setLoading(false));
+  }, [year, month]);
+
+  const prevMonth = () => { if (month === 1) { setYear(y => y-1); setMonth(12); } else setMonth(m => m-1); };
+  const nextMonth = () => { if (month === 12) { setYear(y => y+1); setMonth(1); } else setMonth(m => m+1); };
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const startOffset = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const monthName = new Date(year, month - 1).toLocaleString('cs-CZ', { month: 'long' });
+  const dayW = (SW - 32 - 12) / 7;
+
+  return (
+    <View style={{margin:16,backgroundColor:C.bgCard,borderRadius:16,padding:14,borderWidth:1,borderColor:C.border}}>
+      <Text style={[s.secLabel,{marginBottom:10}]}>Aktivita</Text>
+      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <TouchableOpacity onPress={prevMonth}><Ionicons name="chevron-back" size={20} color={C.amber}/></TouchableOpacity>
+        <Text style={{color:C.cream,fontWeight:'700',fontSize:15}}>{monthName} {year}</Text>
+        <TouchableOpacity onPress={nextMonth}><Ionicons name="chevron-forward" size={20} color={C.amber}/></TouchableOpacity>
+      </View>
+      {loading ? <ActivityIndicator color={C.amber} style={{marginVertical:10}}/> : (
+        <View style={{flexDirection:'row',flexWrap:'wrap'}}>
+          {['Po','Út','St','Čt','Pá','So','Ne'].map(d=>(
+            <Text key={d} style={{width:dayW,textAlign:'center',color:C.creamDim,fontSize:10,marginBottom:4,fontWeight:'600'}}>{d}</Text>
+          ))}
+          {Array(startOffset).fill(null).map((_,i)=>(
+            <View key={`e${i}`} style={{width:dayW,height:dayW}}/>
+          ))}
+          {Array.from({length:daysInMonth},(_,i)=>i+1).map(day=>{
+            const isActive = active.has(day);
+            const isToday  = year===now.getFullYear() && month===now.getMonth()+1 && day===now.getDate();
+            return (
+              <View key={day} style={{width:dayW,height:dayW,alignItems:'center',justifyContent:'center',marginBottom:2}}>
+                <View style={{width:dayW-4,height:dayW-4,borderRadius:(dayW-4)/2,backgroundColor:isActive?C.amber:'transparent',
+                  borderWidth:isToday?1.5:0,borderColor:C.teal,alignItems:'center',justifyContent:'center'}}>
+                  <Text style={{color:isActive?C.bg:C.creamDim,fontSize:11,fontWeight:isActive?'800':'400'}}>{day}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PROFILE SCREEN (renovated with likes on my photos and new like notifications)
 // ══════════════════════════════════════════════════════════════════════════════
 const ProfileScreen = ({ user, onLogout }) => {
@@ -1983,6 +2393,10 @@ const ProfileScreen = ({ user, onLogout }) => {
   const [offQ, setOffQ]         = useState(0);
   const [syncing, setSyncing]   = useState(false);
   const [loading, setLoading]   = useState(true);
+  const [changePwMod, setChangePwMod] = useState(false);
+  const [delAccMod, setDelAccMod]     = useState(false);
+  const [delPw, setDelPw]             = useState('');
+  const [delLoading, setDelLoading]   = useState(false);
 
   useEffect(()=>{ loadAll(); checkOff(); const interval = setInterval(checkNewLikes, 60000); return () => clearInterval(interval); },[]);
   useEffect(()=>{ loadStats(); },[period]);
@@ -1993,10 +2407,7 @@ const ProfileScreen = ({ user, onLogout }) => {
   };
 
   const loadStats = async()=>{
-    try{
-      const d=await apiFetch(`/profile/stats?period=${period}`);
-      setStats(d);
-    }catch{}
+    try{ const d=await apiFetch(`/profile/stats?period=${period}`); setStats(d); }catch{}
   };
 
   const loadPhotos = async()=>{
@@ -2021,9 +2432,7 @@ const ProfileScreen = ({ user, onLogout }) => {
     const lastCheck = await AsyncStorage.getItem('lastLikeCheck');
     try {
       const res = await apiFetch(`/notifications/likes?since=${encodeURIComponent(lastCheck || '1970-01-01')}`);
-      if (res.count > 0) {
-        await scheduleLocalNotification('Nový like!', `Někdo ti dal like na fotce.`);
-      }
+      if (res.count > 0) await scheduleLocalNotification('Nový like!', `Někdo ti dal like na fotce.`);
       await AsyncStorage.setItem('lastLikeCheck', new Date().toISOString());
     } catch(e) {}
   };
@@ -2044,6 +2453,19 @@ const ProfileScreen = ({ user, onLogout }) => {
     }
   };
 
+  const deleteAvatar = ()=>{
+    Alert.alert('Smazat profilovku?','Profilovka bude odstraněna.',[
+      {text:'Zrušit',style:'cancel'},
+      {text:'Smazat',style:'destructive',onPress:async()=>{
+        try{
+          await apiFetch('/profile/avatar',{method:'DELETE'});
+          const upd={...me,avatar_url:null}; setMe(upd);
+          await AsyncStorage.setItem('user_data',JSON.stringify(upd));
+        }catch(e){Alert.alert('Chyba',e.message);}
+      }},
+    ]);
+  };
+
   const saveBio = async()=>{
     try{ await apiFetch('/profile/bio',{method:'PUT',body:JSON.stringify({bio})}); setMe(p=>({...p,bio})); setEditBio(false); }
     catch(e){ Alert.alert('Chyba',e.message); }
@@ -2056,6 +2478,25 @@ const ProfileScreen = ({ user, onLogout }) => {
     ]);
   };
 
+  const deleteAccount = () => {
+    setDelPw('');
+    setDelAccMod(true);
+  };
+
+  const confirmDeleteAccount = async () => {
+    if (!delPw) return;
+    setDelLoading(true);
+    try {
+      await apiFetch('/auth/delete-account', {method:'DELETE', body:JSON.stringify({password: delPw})});
+      await AsyncStorage.multiRemove(['auth_token','user_data']);
+      onLogout();
+    } catch(e) {
+      Alert.alert('Chyba', e.message);
+    } finally {
+      setDelLoading(false);
+    }
+  };
+
   const PERIODS=[['total','Celkem'],['year','Rok'],['month','Měsíc'],['day','Den']];
 
   return(
@@ -2064,10 +2505,17 @@ const ProfileScreen = ({ user, onLogout }) => {
 
       {/* Avatar + info */}
       <View style={s.profileCard}>
-        <TouchableOpacity onPress={pickAvatar} style={{position:'relative',marginBottom:12}}>
-          <Avatar url={me.avatar_url} size={90}/>
-          <View style={s.avatarEdit}><Ionicons name="camera-outline" size={14} color={C.bg}/></View>
-        </TouchableOpacity>
+        <View style={{position:'relative',marginBottom:12}}>
+          <TouchableOpacity onPress={pickAvatar}>
+            <Avatar url={me.avatar_url} size={90}/>
+            <View style={s.avatarEdit}><Ionicons name="camera-outline" size={14} color={C.bg}/></View>
+          </TouchableOpacity>
+          {me.avatar_url && (
+            <TouchableOpacity style={s.avatarDel} onPress={deleteAvatar}>
+              <Ionicons name="trash-outline" size={13} color={C.white}/>
+            </TouchableOpacity>
+          )}
+        </View>
         <Text style={s.profileName}>{me.username}</Text>
         <Text style={s.dimText}>{me.email}</Text>
 
@@ -2112,13 +2560,15 @@ const ProfileScreen = ({ user, onLogout }) => {
       {stats&&(
         <View style={s.statsGrid}>
           {[
-            ['beer-outline',      stats.total_visits,         'hospůdek',    C.amber],
-            ['star-outline',      stats.avg_rating?.toFixed(1),'průměr',     C.star],
-            ['ribbon-outline',    stats.firstlast_count,      'prvochlasty', C.purple],
-            ['trophy-outline',    stats.challenges_done,      'výzev',       C.gold],
+            ['beer-outline',   stats.total_visits,              'hospůdek',      C.amber],
+            ['star-outline',   stats.avg_rating?.toFixed(1),    'průměr ★',      C.star],
+            ['ribbon-outline', stats.firstlast_count,           'prvochlasty',   C.purple],
+            ['trophy-outline', stats.challenges_done,           'výzev',         C.gold],
+            ['walk-outline',   stats.unique_pubs,               'unikátní',      C.teal],
+            ['flame-outline',  stats.streak_days ?? '–',        'dní streak',    C.red],
           ].map(([icon,val,label,color],i)=>(
             <View key={i} style={s.statsGridItem}>
-              <Ionicons name={icon} size={24} color={color} style={{marginBottom:4}}/>
+              <Ionicons name={icon} size={22} color={color} style={{marginBottom:4}}/>
               <Text style={[s.statsGridNum,{color}]}>{val??'–'}</Text>
               <Text style={s.statsGridLabel}>{label}</Text>
             </View>
@@ -2126,7 +2576,7 @@ const ProfileScreen = ({ user, onLogout }) => {
         </View>
       )}
 
-      {/* My photos with like counts */}
+      {/* My photos with like counts + private indicator */}
       {photos.length>0&&(
         <View style={{marginHorizontal:16,marginBottom:16}}>
           <Text style={s.secLabel}>Moje fotky ({photos.length})</Text>
@@ -2138,11 +2588,19 @@ const ProfileScreen = ({ user, onLogout }) => {
                   <Ionicons name="heart-outline" size={10} color={C.white}/>
                   <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count || 0}</Text>
                 </View>
+                {(p.visibility==='private'||p.photo_visibility==='private') && (
+                  <View style={{position:'absolute',top:4,left:4,backgroundColor:'rgba(0,0,0,0.6)',borderRadius:8,padding:3}}>
+                    <Ionicons name="lock-closed" size={11} color={C.amber}/>
+                  </View>
+                )}
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
       )}
+
+      {/* Activity calendar heatmap */}
+      <ActivityCalendar/>
 
       {/* Offline sync */}
       {offQ>0&&(
@@ -2158,14 +2616,69 @@ const ProfileScreen = ({ user, onLogout }) => {
       {/* Settings */}
       <View style={{margin:16,marginTop:0}}>
         <Text style={s.secLabel}>Nastavení</Text>
+        <TouchableOpacity style={s.settRow} onPress={()=>setChangePwMod(true)}>
+          <Ionicons name="lock-closed-outline" size={18} color={C.amber}/>
+          <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Změnit heslo</Text>
+          <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
+        </TouchableOpacity>
         <TouchableOpacity style={s.settRow} onPress={logout}>
           <Ionicons name="log-out-outline" size={18} color={C.red}/>
           <Text style={{fontSize:15,fontWeight:'600',color:C.red}}>Odhlásit se</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={s.settRow} onPress={deleteAccount}>
+          <Ionicons name="trash-outline" size={18} color='#C0392B'/>
+          <Text style={{fontSize:15,fontWeight:'600',color:'#C0392B'}}>Smazat účet</Text>
+        </TouchableOpacity>
       </View>
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',paddingBottom:10}}>Hospůdkobraní v1.3.0</Text>
+
+      {/* Verze + sociální sítě */}
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.0</Text>
+      <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
+        <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
+          <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={()=>Linking.openURL('https://www.instagram.com/michalzplzne44/')}>
+          <MaterialCommunityIcons name="instagram" size={30} color='#E4405F'/>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={()=>Linking.openURL('https://www.youtube.com/@MiKing4410')}>
+          <MaterialCommunityIcons name="youtube" size={30} color='#FF0000'/>
+        </TouchableOpacity>
+      </View>
 
       {pv!==null && photos.length>0 && <PhotoViewer photos={photos.map(p=>({...p, liked:false, like_count: p.like_count || 0, username: me.username}))} startIndex={pv} onClose={()=>setPv(null)} userId={user.id} />}
+      {changePwMod && <ChangePasswordModal onClose={()=>setChangePwMod(false)}/>}
+
+      <Modal visible={delAccMod} transparent animationType="fade" onRequestClose={()=>setDelAccMod(false)}>
+        <View style={s.modalOverlay}>
+          <View style={[s.modalCard,{gap:12}]}>
+            <Text style={[s.modalTitle,{color:C.red}]}>Smazat účet</Text>
+            <Text style={{color:C.creamDim,textAlign:'center',lineHeight:20}}>Tato akce je nevratná. Zadej své heslo pro potvrzení.</Text>
+            <TextInput
+              style={[s.input,{marginTop:4}]}
+              placeholder="Heslo"
+              placeholderTextColor={C.creamDim}
+              secureTextEntry
+              value={delPw}
+              onChangeText={setDelPw}
+              autoFocus
+            />
+            <View style={{flexDirection:'row',gap:10,marginTop:4}}>
+              <TouchableOpacity style={[s.btn,{flex:1,backgroundColor:C.bgCardAlt}]} onPress={()=>setDelAccMod(false)}>
+                <Text style={[s.btnTxt,{color:C.cream}]}>Zrušit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.btn,{flex:1,backgroundColor:C.red,opacity:delLoading||!delPw?0.5:1}]}
+                onPress={confirmDeleteAccount}
+                disabled={delLoading||!delPw}
+              >
+                {delLoading
+                  ? <ActivityIndicator color={C.white} size="small"/>
+                  : <Text style={s.btnTxt}>Smazat účet</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -2239,7 +2752,10 @@ export default function App() {
     <View style={{flex:1,backgroundColor:C.bg}}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg}/>
       <View style={{flex:1}}>
-        {tab==='map'        && <MapScreen user={user}/>}
+        {/* MapScreen zůstává namountovaný – předchází šedé obrazovce po přepnutí */}
+        <View style={{flex:1,display: tab==='map' ? 'flex' : 'none'}}>
+          <MapScreen user={user}/>
+        </View>
         {tab==='visits'     && <VisitsScreen user={user}/>}
         {tab==='community'  && <CommunityScreen user={user}/>}
         {tab==='challenges' && <ChallengesScreen user={user}/>}
@@ -2396,6 +2912,7 @@ const s = StyleSheet.create({
   // Profile
   profileCard:{margin:16,backgroundColor:C.bgCard,borderRadius:20,padding:20,alignItems:'center',borderWidth:1,borderColor:C.border},
   avatarEdit: {position:'absolute',bottom:0,right:0,backgroundColor:C.amber,borderRadius:12,padding:4},
+  avatarDel:  {position:'absolute',top:0,right:-2,backgroundColor:C.red,borderRadius:10,padding:3},
   profileName:{color:C.cream,fontSize:22,fontWeight:'900'},
   bioText:    {color:C.creamDim,fontSize:14,textAlign:'center',fontStyle:'italic'},
   offBanner:  {margin:16,backgroundColor:'#1A1200',borderRadius:14,padding:12,flexDirection:'row',alignItems:'center',gap:10,borderWidth:1,borderColor:C.amber},
