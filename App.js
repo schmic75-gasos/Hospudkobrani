@@ -363,6 +363,18 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
     setPhotos(prev => prev.map(p => p.id === photoId ? {...p, liked, like_count: likeCount} : p));
   };
 
+  const deleteMyPhoto = (photoId) => {
+    Alert.alert('Smazat fotku?', 'Tuto akci nelze vrátit.', [
+      { text: 'Zrušit', style: 'cancel' },
+      { text: 'Smazat', style: 'destructive', onPress: async () => {
+        try {
+          await apiFetch('/photos/' + photoId, { method: 'DELETE' });
+          setPhotos(prev => prev.filter(ph => ph.id !== photoId));
+        } catch(e) { Alert.alert('Chyba', 'Nepodařilo se smazat fotku.'); }
+      }},
+    ]);
+  };
+
   const sharePub = () => {
     Share.share({
       message: `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!\nhttps://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`,
@@ -441,7 +453,12 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
                             <Image source={{uri:p.url}} style={{width:120,height:90,borderRadius:10}} resizeMode="cover"/>
                             <View style={s.expandOverlay}><Ionicons name="expand-outline" size={14} color={C.white}/></View>
                           </TouchableOpacity>
-                          {getPhotoLikeId(p) ? (
+                          {p.visibility==='private' && (
+                            <View style={{position:'absolute',top:4,left:4,backgroundColor:'rgba(0,0,0,0.65)',borderRadius:8,padding:3}}>
+                              <Ionicons name="lock-closed" size={11} color={C.amber}/>
+                            </View>
+                          )}
+                          {getPhotoLikeId(p) && p.visibility!=='private' ? (
                             <TouchableOpacity style={s.photoLikeBtnMini} onPress={async()=>{
                               const photoLikeId = getPhotoLikeId(p);
                               const newLiked = !p.liked;
@@ -451,6 +468,13 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
                             }}>
                               <Ionicons name={p.liked?'heart':'heart-outline'} size={12} color={p.liked?C.red:C.white}/>
                               <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count||0}</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {p.username===String(userId)||Number(p.user_id)===Number(userId) ? (
+                            <TouchableOpacity
+                              onPress={()=>deleteMyPhoto(p.id)}
+                              style={{position:'absolute',top:4,right:4,backgroundColor:'rgba(0,0,0,0.65)',borderRadius:8,padding:3}}>
+                              <Ionicons name="trash-outline" size={13} color={C.red}/>
                             </TouchableOpacity>
                           ) : null}
                         </View>
@@ -1255,10 +1279,23 @@ const MapScreen = ({ user }) => {
     });
   },[loc]);
 
-  const selPubDist = useMemo(()=>{
-    if(!loc||!selPub)return null;
-    return Math.round(hav(loc.latitude,loc.longitude,selPub.latitude,selPub.longitude));
-  },[loc,selPub]);
+  // Live odpočet vzdálenosti – aktualizuje se každou sekundu, ne jen při pohybu
+  const locRef = useRef(null);
+  useEffect(() => { locRef.current = loc; }, [loc]);
+  const selPubRef = useRef(null);
+  useEffect(() => { selPubRef.current = selPub; }, [selPub]);
+  const [selPubDist, setSelPubDist] = useState(null);
+  useEffect(() => {
+    const tick = () => {
+      const l = locRef.current;
+      const p = selPubRef.current;
+      if (!l || !p) { setSelPubDist(null); return; }
+      setSelPubDist(Math.round(hav(l.latitude, l.longitude, p.latitude, p.longitude)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [selPub]); // restart intervalu když se změní vybraná hospůdka
 
   const openPub = useCallback(pub => {
     if (!cameraRef.current) return;
@@ -2438,6 +2475,18 @@ const ProfileScreen = ({ user, onLogout }) => {
     try{ const d=await apiFetch('/profile/my-photos'); setPhotos(d); }catch{}
   };
 
+  const deleteMyPhoto = (photoId) => {
+    Alert.alert('Smazat fotku?', 'Tuto akci nelze vrátit.', [
+      { text: 'Zrušit', style: 'cancel' },
+      { text: 'Smazat', style: 'destructive', onPress: async () => {
+        try {
+          await apiFetch('/photos/' + photoId, { method: 'DELETE' });
+          setPhotos(prev => prev.filter(ph => ph.id !== photoId));
+        } catch(e) { Alert.alert('Chyba', 'Nepodařilo se smazat fotku.'); }
+      }},
+    ]);
+  };
+
   const loadRank = async()=>{
     try{ const d=await apiFetch('/profile/rank'); setRank(d); }catch{}
   };
@@ -2604,8 +2653,10 @@ const ProfileScreen = ({ user, onLogout }) => {
           <Text style={s.secLabel}>Moje fotky ({photos.length})</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {photos.map((p,i)=>(
-              <TouchableOpacity key={i} onPress={()=>setPv(i)} activeOpacity={0.85} style={{marginRight:8,position:'relative'}}>
-                <Image source={{uri:p.url}} style={{width:90,height:80,borderRadius:10}} resizeMode="cover"/>
+              <View key={i} style={{marginRight:8,position:'relative'}}>
+                <TouchableOpacity onPress={()=>setPv(i)} activeOpacity={0.85}>
+                  <Image source={{uri:p.url}} style={{width:90,height:80,borderRadius:10}} resizeMode="cover"/>
+                </TouchableOpacity>
                 <View style={s.photoLikeBtnMini}>
                   <Ionicons name="heart-outline" size={10} color={C.white}/>
                   <Text style={{color:C.white,fontSize:9,marginLeft:2}}>{p.like_count || 0}</Text>
@@ -2615,7 +2666,12 @@ const ProfileScreen = ({ user, onLogout }) => {
                     <Ionicons name="lock-closed" size={11} color={C.amber}/>
                   </View>
                 )}
-              </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={()=>deleteMyPhoto(p.id)}
+                  style={{position:'absolute',top:4,right:4,backgroundColor:'rgba(0,0,0,0.65)',borderRadius:8,padding:3}}>
+                  <Ionicons name="trash-outline" size={13} color={C.red}/>
+                </TouchableOpacity>
+              </View>
             ))}
           </ScrollView>
         </View>
@@ -2654,7 +2710,7 @@ const ProfileScreen = ({ user, onLogout }) => {
       </View>
 
       {/* Verze + sociální sítě */}
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.1</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.2</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
