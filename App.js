@@ -960,6 +960,7 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
     null
   ]);
   const [profile, setProfile]   = useState('walk');
+  const [avoidMotorway, setAvoidMotorway] = useState(false);
   const [calculating, setCalc]  = useState(false);
   const [routeInfo, setRouteInfo] = useState(null);
   const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
@@ -967,6 +968,18 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
   const setWp = (idx, wp) => setWaypoints(prev => { const n=[...prev]; n[idx]=wp; return n; });
   const addWp = () => setWaypoints(prev => [...prev, null]);
   const removeWp = idx => setWaypoints(prev => prev.filter((_,i)=>i!==idx));
+  const moveWpUp = idx => setWaypoints(prev => {
+    if (idx <= 0) return prev;
+    const n = [...prev];
+    [n[idx-1], n[idx]] = [n[idx], n[idx-1]];
+    return n;
+  });
+  const moveWpDown = idx => setWaypoints(prev => {
+    if (idx >= prev.length-1) return prev;
+    const n = [...prev];
+    [n[idx], n[idx+1]] = [n[idx+1], n[idx]];
+    return n;
+  });
   const useMyLoc = idx => {
     if (!userLoc) { Alert.alert('Bez GPS','Poloha není dostupná.'); return; }
     setWp(idx, { label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude });
@@ -977,7 +990,8 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
     if (filled.length < 2) { Alert.alert('Chybí body','Zvol alespoň start a cíl.'); return; }
     setCalc(true);
     try {
-      const ghProfile = TRANSPORT_MODES.find(m=>m.id===profile)?.gh || 'foot';
+      let ghProfile = TRANSPORT_MODES.find(m=>m.id===profile)?.gh || 'foot';
+      if (profile === 'car' && avoidMotorway) ghProfile = 'car_avoid_motorway';
       const result = await fetchGHRoute(filled, ghProfile);
       setRouteInfo(result);
       onRouteReady(result);
@@ -1000,9 +1014,26 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {/* Waypoints */}
             {waypoints.map((wp, idx) => (
-              <View key={idx} style={{flexDirection:'row',alignItems:'center',gap:8,marginBottom:10}}>
-                <View style={{width:26,height:26,borderRadius:13,backgroundColor:idx===0?C.teal:idx===waypoints.length-1?C.amber:C.purple,alignItems:'center',justifyContent:'center'}}>
-                  <Text style={{color:C.bg,fontWeight:'900',fontSize:11}}>{idx===0?'A':idx===waypoints.length-1?'B':String.fromCharCode(65+idx)}</Text>
+              <View key={idx} style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:10}}>
+                {/* Reorder arrows */}
+                <View style={{gap:2}}>
+                  <TouchableOpacity
+                    onPress={()=>moveWpUp(idx)}
+                    disabled={idx===0}
+                    style={{padding:3,opacity:idx===0?0.2:1}}
+                  >
+                    <Ionicons name="chevron-up" size={14} color={C.creamDim}/>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={()=>moveWpDown(idx)}
+                    disabled={idx===waypoints.length-1}
+                    style={{padding:3,opacity:idx===waypoints.length-1?0.2:1}}
+                  >
+                    <Ionicons name="chevron-down" size={14} color={C.creamDim}/>
+                  </TouchableOpacity>
+                </View>
+                <View style={{width:24,height:24,borderRadius:12,backgroundColor:idx===0?C.teal:idx===waypoints.length-1?C.amber:C.purple,alignItems:'center',justifyContent:'center'}}>
+                  <Text style={{color:C.bg,fontWeight:'900',fontSize:10}}>{idx===0?'A':idx===waypoints.length-1?'B':String.fromCharCode(65+idx)}</Text>
                 </View>
                 <TouchableOpacity style={[s.input,{flex:1,marginBottom:0,minHeight:42,justifyContent:'center'}]}
                   onPress={()=>setPubPicker(idx)}>
@@ -1027,7 +1058,7 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
 
             {/* Profil (způsob dopravy) */}
             <Text style={s.secLabel}>Způsob dopravy</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:profile==='car'?8:14}}>
               {GH_PROFILES.map(m=>(
                 <TouchableOpacity key={m.id} style={{alignItems:'center',marginRight:14}} onPress={()=>setProfile(m.id)}>
                   <View style={{width:50,height:50,borderRadius:25,alignItems:'center',justifyContent:'center',
@@ -1039,6 +1070,16 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            {profile==='car' && (
+              <TouchableOpacity
+                style={{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:10,paddingHorizontal:12,backgroundColor:C.bgCardAlt,borderRadius:12,borderWidth:1,borderColor:avoidMotorway?C.amber:C.border,marginBottom:14}}
+                onPress={()=>setAvoidMotorway(v=>!v)}
+              >
+                <Ionicons name={avoidMotorway?'checkbox':'square-outline'} size={20} color={avoidMotorway?C.amber:C.creamDim}/>
+                <Text style={{color:avoidMotorway?C.cream:C.creamDim,fontWeight:'600',fontSize:14,flex:1}}>Vyvarovat se dálnicím</Text>
+                <Ionicons name="car-outline" size={16} color={C.creamDim}/>
+              </TouchableOpacity>
+            )}
 
             {/* Route info */}
             {routeInfo && (
@@ -1134,6 +1175,8 @@ const MapScreen = ({ user }) => {
   const [viewport, setViewport]         = useState({ center: INITIAL_MAP_CENTER, zoom: 9 });
   const [routeShape, setRouteShape]     = useState(null);
   const [routingMod, setRoutingMod]     = useState(false);
+  const [searchMod, setSearchMod]       = useState(false);
+  const [searchQ, setSearchQ]           = useState('');
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -1497,6 +1540,9 @@ const MapScreen = ({ user }) => {
         <TouchableOpacity style={[s.mapBtn,routeShape&&{borderColor:C.teal,borderWidth:2}]} onPress={()=>setRoutingMod(true)}>
           <Ionicons name="navigate-outline" size={22} color={routeShape?C.teal:C.creamDim}/>
         </TouchableOpacity>
+        <TouchableOpacity style={s.mapBtn} onPress={()=>{ setSearchQ(''); setSearchMod(true); }}>
+          <Ionicons name="search-outline" size={22} color={C.creamDim}/>
+        </TouchableOpacity>
       </View>
 
       {suggestMode&&(
@@ -1526,6 +1572,83 @@ const MapScreen = ({ user }) => {
             Nemáš staženou offline oblast pro {currentAreaName || 'tuto oblast'}. Stáhni ji v 📥 menu.
           </Text>
         </View>
+      )}
+
+      {/* Search modal */}
+      {searchMod && (
+        <Modal visible animationType="fade" transparent onRequestClose={()=>setSearchMod(false)}>
+          <View style={{flex:1,backgroundColor:'rgba(0,0,0,0.6)',justifyContent:'flex-start',paddingTop:60}}>
+            <View style={{backgroundColor:C.bgCard,marginHorizontal:16,borderRadius:20,padding:16,borderWidth:1,borderColor:C.border,maxHeight:SH*0.75}}>
+              <View style={{flexDirection:'row',alignItems:'center',gap:10,marginBottom:12}}>
+                <Ionicons name="search-outline" size={20} color={C.amber}/>
+                <Text style={{color:C.amber,fontSize:17,fontWeight:'800',flex:1}}>Hledat podnik</Text>
+                <TouchableOpacity onPress={()=>setSearchMod(false)}>
+                  <Ionicons name="close" size={22} color={C.creamDim}/>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={[s.input,{marginBottom:10}]}
+                placeholder="Název, adresa, typ…"
+                placeholderTextColor={C.creamDim}
+                value={searchQ}
+                onChangeText={setSearchQ}
+                autoFocus
+                autoCorrect={false}
+              />
+              {(() => {
+                const q = searchQ.trim().toLowerCase();
+                const results = q.length < 2 ? [] : pubs.filter(p =>
+                  (p.name||'').toLowerCase().includes(q) ||
+                  (p.address||'').toLowerCase().includes(q) ||
+                  (p.type||'').toLowerCase().includes(q) ||
+                  (p.city||'').toLowerCase().includes(q)
+                ).slice(0, 30);
+                if (q.length > 0 && q.length < 2) return (
+                  <Text style={{color:C.creamDim,textAlign:'center',padding:16}}>Zadej alespoň 2 znaky…</Text>
+                );
+                if (q.length >= 2 && results.length === 0) return (
+                  <Text style={{color:C.creamDim,textAlign:'center',padding:16}}>Žádný podnik nenalezen.</Text>
+                );
+                return (
+                  <FlatList
+                    data={results}
+                    keyExtractor={p=>String(p.id)}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    renderItem={({item})=>(
+                      <TouchableOpacity
+                        style={{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:12,borderBottomWidth:1,borderBottomColor:C.border}}
+                        onPress={()=>{
+                          setSearchMod(false);
+                          setSearchQ('');
+                          if(Number.isFinite(item.latitude)&&Number.isFinite(item.longitude)){
+                            cameraRef.current?.setCamera({
+                              centerCoordinate:[item.longitude,item.latitude],
+                              zoomLevel:16,
+                              animationDuration:800,
+                              animationMode:'flyTo',
+                            });
+                          }
+                          setSelPub(item);
+                          setShowSheet(true);
+                        }}
+                      >
+                        <View style={{width:36,height:36,borderRadius:18,backgroundColor:C.bgCardAlt,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:C.border}}>
+                          <Ionicons name="beer-outline" size={18} color={C.amber}/>
+                        </View>
+                        <View style={{flex:1}}>
+                          <Text style={{color:C.cream,fontWeight:'700',fontSize:14}} numberOfLines={1}>{item.name}</Text>
+                          <Text style={{color:C.creamDim,fontSize:12}} numberOfLines={1}>{[item.type,item.address,item.city].filter(Boolean).join(' · ')}</Text>
+                        </View>
+                        {visited.has(item.id)&&<Ionicons name="checkmark-circle" size={18} color={C.green}/>}
+                      </TouchableOpacity>
+                    )}
+                  />
+                );
+              })()}
+            </View>
+          </View>
+        </Modal>
       )}
 
       {/* Bottom sheet */}
@@ -2710,7 +2833,7 @@ const ProfileScreen = ({ user, onLogout }) => {
       </View>
 
       {/* Verze + sociální sítě */}
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.2</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.3</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
