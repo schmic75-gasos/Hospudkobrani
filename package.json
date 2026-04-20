@@ -1,6 +1,6 @@
 {
   "name": "hospudkobrani",
-  "version": "1.0.0",
+  "version": "1.4.4",
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
@@ -29,6 +29,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-geocoding": "^0.5.0",
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {

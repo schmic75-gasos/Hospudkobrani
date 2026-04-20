@@ -7,7 +7,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   Alert, Modal, Image, ActivityIndicator, FlatList, Dimensions,
   Platform, StatusBar, Animated, KeyboardAvoidingView, RefreshControl,
-  Linking, SafeAreaView, AppState, Share,
+  Linking, Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -28,6 +28,8 @@ const MAPBOX_STYLE_URL = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
 const INITIAL_MAP_CENTER = [13.3736, 49.7384];
 const PUBS_SOURCE_ID = 'pubs-source';
 const SELECTED_PUB_SOURCE_ID = 'selected-pub-source';
+const TRANSPORT_SOURCE_ID = 'transport-source';
+const PARKING_SOURCE_ID = 'parking-source';
 
 const MAPBOX_SDK = (() => {
   try {
@@ -49,6 +51,7 @@ const MapboxCircleLayer = MAPBOX_SDK?.CircleLayer;
 const MapboxSymbolLayer = MAPBOX_SDK?.SymbolLayer;
 const MapboxLocationPuck = MAPBOX_SDK?.LocationPuck;
 const MapboxLineLayer = MAPBOX_SDK?.LineLayer;
+const MapboxImages = MAPBOX_SDK?.Images;
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const C = {
@@ -90,6 +93,42 @@ const mapLayerStyles = {
     circleStrokeColor: C.white,
     circleStrokeWidth: 3,
     circleRadius: ['interpolate', ['linear'], ['zoom'], 8, 12, 12, 16, 16, 20],
+  },
+  transport: {
+    circlePitchAlignment: 'map',
+    circleColor: [
+      'match',
+      ['get', 'stop_type'],
+      'train', C.purple,
+      'station', C.purple,
+      'halt', C.purple,
+      'platform', C.blue,
+      'stop_position', C.blue,
+      C.blue
+    ],
+    circleRadius: ['interpolate', ['linear'], ['zoom'], 8, 4.5, 12, 6.5, 16, 9],
+    circleStrokeWidth: 1.5,
+    circleStrokeColor: C.bgCard,
+    circleOpacity: 0.95,
+  },
+  parking: {
+    circlePitchAlignment: 'map',
+    circleColor: C.teal,
+    circleRadius: ['interpolate', ['linear'], ['zoom'], 8, 4.5, 12, 6.5, 16, 9],
+    circleStrokeWidth: 1.5,
+    circleStrokeColor: C.bgCard,
+    circleOpacity: 0.95,
+  },
+  poiLabels: {
+    textField: ['coalesce', ['get', 'name'], ''],
+    textSize: 11,
+    textColor: C.cream,
+    textHaloColor: C.bg,
+    textHaloWidth: 1.2,
+    textAllowOverlap: false,
+    textAnchor: 'top',
+    textOffset: [0, 1.1],
+    textOptional: true,
   },
 };
 
@@ -143,6 +182,39 @@ const hav = (a,b,c,d) => {
   const x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dO/2)**2;
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 };
+
+const normalizeStopType = value => {
+  const t = String(value || '').toLowerCase();
+  if (['train', 'station', 'halt'].includes(t)) return 'train';
+  return 'bus';
+};
+
+const formatDistanceMeters = meters => {
+  const n = Number(meters);
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1000) return `${(n / 1000).toFixed(1)} km`;
+  return `${Math.round(n)} m`;
+};
+
+const toPoiFeatures = (items = [], kind) => ({
+  type: 'FeatureCollection',
+  features: items
+    .filter(item => Number.isFinite(Number(item.longitude)) && Number.isFinite(Number(item.latitude)))
+    .map((item, index) => ({
+      type: 'Feature',
+      id: `${kind}-${item.osm_id || item.id || index}`,
+      properties: {
+        ...item,
+        kind,
+        stop_type: normalizeStopType(item.stop_type),
+        distance_label: formatDistanceMeters(item.distance),
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [Number(item.longitude), Number(item.latitude)],
+      },
+    })),
+});
 
 // ─── NOTIFIKACE ───────────────────────────────────────────────────────────────
 Notifications.setNotificationHandler({
@@ -293,6 +365,53 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
   );
 };
 
+const TutorialModal = ({ visible, onClose }) => {
+  useEffect(() => {
+    if (visible) setStep(0);
+  }, [visible]);
+  const steps = [
+    { icon: "map-outline", title: "Mapa hospůdek", desc: "Na mapě uvidíš všechny hospůdky. Zelené jsou navštívené, oranžové čekají na odkliknutí." },
+    { icon: "locate-outline", title: "GPS poloha", desc: "Aplikace používá tvou polohu k ověření, že jsi skutečně u hospůdky. Musíš být do 25 metrů." },
+    { icon: "checkbox-outline", title: "Odkliknutí", desc: "Klepni na hospůdku, odpověz na otázku, dej hodnocení a přidej fotku. Získáš body do žebříčku." },
+    { icon: "trophy-outline", title: "Výzvy a prvochlasty", desc: "Plněním výzev sbíráš odznaky. Kdo je první v daném roce v hospůdce, získává titul Prvochlast." },
+    { icon: "download-outline", title: "Offline režim", desc: "Stáhni si zvlášť mapové podklady i hospůdky. Offline mapa funguje jen pro již stažené oblasti." },
+    { icon: "train-outline", title: "Doprava a parkování", desc: "U detailu hospůdky i na mapě uvidíš nejbližší vlakové a autobusové zastávky a veřejná parkoviště." },
+    { icon: "people-outline", title: "Komunita", desc: "Sleduj žebříčky, piš do chatu, prohlížej fotky ostatních a vyhledávej hráče včetně jejich posledních odkliků." },
+  ];
+  const [step, setStep] = useState(0);
+  const stepData = steps[step];
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard, {maxHeight: SH*0.8}]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Vítej v Hospůdkobraní! 🍺</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+          </View>
+          <View style={{alignItems: 'center', marginVertical: 20}}>
+            <Ionicons name={stepData.icon} size={64} color={C.amber} />
+            <Text style={[s.modalTitle, {fontSize: 22, marginTop: 12}]}>{stepData.title}</Text>
+            <Text style={[s.dimText, {textAlign: 'center', marginTop: 8, paddingHorizontal: 16}]}>{stepData.desc}</Text>
+          </View>
+          <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 20}}>
+            {step > 0 && (
+              <TouchableOpacity style={s.btnSec} onPress={() => setStep(s => s-1)}>
+                <Text style={{color: C.creamDim}}>Zpět</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[s.btnPri, {flex: step === 0 ? 1 : 0.5, marginLeft: step > 0 ? 10 : 0}]} onPress={() => {
+              if (step < steps.length-1) setStep(s => s+1);
+              else onClose();
+            }}>
+              <Text style={s.btnPriT}>{step === steps.length-1 ? 'Začít hrát!' : 'Další'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 // User profile modal
 const UserProfileModal = ({ username, selfId, onClose }) => {
   const [profile, setProfile] = useState(null);
@@ -302,6 +421,7 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
     apiFetch(`/users/find?q=${encodeURIComponent(username)}`).then(setProfile).catch(()=>setProfile(null)).finally(()=>setLoading(false));
   },[username]);
   const isSelf = profile && profile.id === selfId;
+  const recentVisits = Array.isArray(profile?.visits) ? profile.visits.slice(0, 5) : [];
   return (
     <Modal visible animationType="slide" transparent>
       <View style={s.modalOverlay}>
@@ -331,6 +451,23 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
             </View>
           )}
         </View>
+        <View>
+          {recentVisits.length > 0 && (
+            <View style={{marginTop: 16, width: '100%'}}>
+              <Text style={[s.secLabel, {fontSize: 14}]}>Nedávné návštěvy</Text>
+              {recentVisits.map(v => (
+                <View key={v.pub_id} style={{flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:C.bgCardAlt, borderRadius:10, padding:8, marginBottom:6}}>
+                  <View>
+                    <Text style={{color:C.cream, fontWeight:'700'}}>{v.pub_name}</Text>
+                    <Stars rating={v.rating} size={10}/>
+                    {v.note && <Text style={{color:C.creamDim, fontSize:11, fontStyle:'italic'}}>"{v.note.substring(0, 50)}"</Text>}
+                  </View>
+                  <Text style={[s.dimText, {fontSize: 10}]}>{new Date(v.logged_at).toLocaleDateString('cs-CZ')}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
       </View>
       {bigAvatar && profile?.avatar_url && (
         <PhotoViewer photos={[{url:profile.avatar_url,username:profile.username,id:null,liked:false,like_count:0}]} startIndex={0} onClose={()=>setBigAvatar(false)} userId={selfId} />
@@ -342,22 +479,34 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // PUB DETAIL MODAL (with likes on photos)
 // ══════════════════════════════════════════════════════════════════════════════
-const PubDetailModal = ({ pub, onClose, userId }) => {
+const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
   const [reviews, setReviews]     = useState([]);
   const [photos, setPhotos]       = useState([]);
   const [firstlasts, setFirstlasts] = useState([]);
+  const [transportData, setTransportData] = useState(nearbyTransport || { stops: [], parking: [] });
   const [loading, setLoading]     = useState(true);
   const [pv, setPv]               = useState(null);
   const [userModal, setUserModal] = useState(null);
   const [reportMod, setReportMod] = useState(false);
 
   useEffect(()=>{
+    setTransportData(nearbyTransport || { stops: [], parking: [] });
+  }, [nearbyTransport, pub.id]);
+
+  useEffect(()=>{
     Promise.all([
       apiFetch(`/pubs/${pub.id}/reviews`).catch(()=>[]),
       apiFetch(`/pubs/${pub.id}/photos`).catch(()=>[]),
       apiFetch(`/pubs/${pub.id}/firstlasts`).catch(()=>[]),
-    ]).then(([r,p,fl])=>{ setReviews(r); setPhotos(p); setFirstlasts(fl); setLoading(false); });
-  },[pub.id]);
+      apiFetch(`/transport/nearby?lat=${pub.latitude}&lng=${pub.longitude}&radius=1500`).catch(()=>({ stops: [], parking: [] })),
+    ]).then(([r,p,fl,tp])=>{
+      setReviews(r);
+      setPhotos(p);
+      setFirstlasts(fl);
+      setTransportData(tp || { stops: [], parking: [] });
+      setLoading(false);
+    });
+  },[pub.id, pub.latitude, pub.longitude]);
 
   const handleLikeUpdate = (photoId, liked, likeCount) => {
     setPhotos(prev => prev.map(p => p.id === photoId ? {...p, liked, like_count: likeCount} : p));
@@ -438,6 +587,44 @@ const PubDetailModal = ({ pub, onClose, userId }) => {
                     <Chip key={i} label={b} color={C.amber} icon="beer-outline"/>
                   ))}
                 </View>
+              </View>
+            )}
+
+            {!loading && ((transportData?.stops?.length || 0) > 0 || (transportData?.parking?.length || 0) > 0) && (
+              <View style={{marginTop:14}}>
+                <Text style={s.secLabel}>Doprava v okolí</Text>
+                {(transportData?.stops || []).slice(0, 5).map((stop, i) => (
+                  <View key={`stop-${i}`} style={s.poiRow}>
+                    <View style={[s.poiIconWrap, { backgroundColor: normalizeStopType(stop.stop_type) === 'train' ? 'rgba(142,68,173,0.18)' : 'rgba(41,128,185,0.18)' }]}>
+                      <Ionicons
+                        name={normalizeStopType(stop.stop_type) === 'train' ? 'train-outline' : 'bus-outline'}
+                        size={16}
+                        color={normalizeStopType(stop.stop_type) === 'train' ? C.purple : C.blue}
+                      />
+                    </View>
+                    <View style={{flex:1}}>
+                      <Text style={s.poiName}>{stop.name || 'Zastávka'}</Text>
+                      <Text style={s.dimText}>
+                        {normalizeStopType(stop.stop_type) === 'train' ? 'Vlak / nádraží' : 'Bus / MHD'} · {formatDistanceMeters(stop.distance)}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+                {(transportData?.parking || []).slice(0, 5).map((park, i) => (
+                  <View key={`park-${i}`} style={s.poiRow}>
+                    <View style={[s.poiIconWrap, { backgroundColor: 'rgba(22,160,133,0.18)' }]}>
+                      <Ionicons name="car-outline" size={16} color={C.teal} />
+                    </View>
+                    <View style={{flex:1}}>
+                      <Text style={s.poiName}>{park.name || 'Parkoviště'}</Text>
+                      <Text style={s.dimText}>
+                        {formatDistanceMeters(park.distance)}
+                        {park.capacity ? ` · kapacita ${park.capacity}` : ''}
+                        {park.fee ? ' · placené' : ' · zdarma / neuvedeno'}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             )}
 
@@ -642,6 +829,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
   const [pubCounts, setPubCounts] = useState({});
   const [versions, setVersions]   = useState({});
   const [progress, setProgress]   = useState({});
+  const [packsReady, setPacksReady] = useState({});
 
   useEffect(()=>{ loadAreas(); },[]);
 
@@ -650,6 +838,10 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
     const sub = MapboxNative.offlineManager.subscribe((pack, status) => {
       const pct = status.percentage || 0;
       setProgress(prev => ({ ...prev, [pack.name]: pct }));
+      const finished = status.state === 'complete' || pct >= 100;
+      if (finished) {
+        setPacksReady(prev => ({ ...prev, [pack.name]: true }));
+      }
     });
     return () => sub?.remove?.();
   }, []);
@@ -667,6 +859,16 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
       if (v) vers[code] = v;
     }
     setVersions(vers);
+    if (MapboxNative?.offlineManager) {
+      try {
+        const packs = await MapboxNative.offlineManager.getPacks();
+        const ready = {};
+        packs.forEach(pack => {
+          ready[pack.name] = true;
+        });
+        setPacksReady(ready);
+      } catch {}
+    }
   };
 
   const download = async (country) => {
@@ -718,7 +920,8 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
       await AsyncStorage.setItem(`version_${country.code}`, verRes.version);
       setAreas(a => [...new Set([...a, country.code])]);
       setPubCounts(c=>({...c,[country.code]:fresh.length}));
-      Alert.alert('Staženo ✓', `${country.name}: ${fresh.length} hospůdek uloženo offline.`);
+      setPacksReady(prev => ({ ...prev, [`map_${country.code}`]: true }));
+      Alert.alert('Staženo ✓', `${country.name}: ${fresh.length} hospůdek uloženo offline. Mapový balík byl připraven pro offline použití.`);
       onAreaDownloaded?.();
     } catch(e) { Alert.alert('Chyba stahování', e.message); }
     setDl(null);
@@ -802,13 +1005,18 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
               const isDown     = downloading===c.code;
               const count      = pubCounts[c.code];
               const pct        = progress[`map_${c.code}`];
-              const hasUpdate  = downloaded && versions[c.code] && (()=>{ /* dummy, kontrola až po kliknutí */ return false; })();
+              const packReady  = !!packsReady[`map_${c.code}`];
               return (
                 <View key={c.code} style={s.areaRow}>
                   <Text style={s.areaFlag}>{c.flag}</Text>
                   <View style={{flex:1}}>
                     <Text style={[s.areaName,downloaded&&{color:C.green}]}>{c.name}</Text>
                     {downloaded&&count!=null&&<Text style={s.dimText}>{count} hospůdek</Text>}
+                    {downloaded && (
+                      <Text style={[s.dimText,{marginTop:2}]}>
+                        Mapa: {packReady ? 'stažena offline' : isDown ? 'stahuje se…' : 'čeká na dokončení'}
+                      </Text>
+                    )}
                     {pct > 0 && pct < 100 && (
                       <View style={{marginTop:4}}>
                         <View style={{height:6,backgroundColor:'#333',borderRadius:4,overflow:'hidden'}}>
@@ -1177,6 +1385,9 @@ const MapScreen = ({ user }) => {
   const [routingMod, setRoutingMod]     = useState(false);
   const [searchMod, setSearchMod]       = useState(false);
   const [searchQ, setSearchQ]           = useState('');
+  const [nearbyTransport, setNearbyTransport] = useState({ stops: [], parking: [] });
+  const [transportLoading, setTransportLoading] = useState(false);
+  const [selectedPoi, setSelectedPoi]   = useState(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const fCount = useMemo(()=>{
@@ -1311,6 +1522,9 @@ const MapScreen = ({ user }) => {
     };
   }, [selPub]);
 
+  const transportShape = useMemo(() => toPoiFeatures(nearbyTransport?.stops || [], 'transport'), [nearbyTransport]);
+  const parkingShape = useMemo(() => toPoiFeatures(nearbyTransport?.parking || [], 'parking'), [nearbyTransport]);
+
   useEffect(()=>{
     if(!loc||hasCenteredRef.current||!cameraRef.current)return;
     hasCenteredRef.current = true;
@@ -1340,10 +1554,28 @@ const MapScreen = ({ user }) => {
     return () => clearInterval(id);
   }, [selPub]); // restart intervalu když se změní vybraná hospůdka
 
+  const loadNearbyTransport = useCallback(async (pub) => {
+    if (!pub?.latitude || !pub?.longitude) {
+      setNearbyTransport({ stops: [], parking: [] });
+      return;
+    }
+    setTransportLoading(true);
+    try {
+      const data = await apiFetch(`/transport/nearby?lat=${pub.latitude}&lng=${pub.longitude}&radius=1500`);
+      setNearbyTransport(data || { stops: [], parking: [] });
+    } catch {
+      setNearbyTransport({ stops: [], parking: [] });
+    } finally {
+      setTransportLoading(false);
+    }
+  }, []);
+
   const openPub = useCallback(pub => {
     if (!cameraRef.current) return;
     setSelPub(pub);
+    setSelectedPoi(null);
     setShowSheet(true);
+    loadNearbyTransport(pub);
     cameraRef.current?.setCamera({
       centerCoordinate: [pub.longitude, pub.latitude],
       padding: { paddingTop: 80, paddingRight: 40, paddingBottom: 260, paddingLeft: 40 },
@@ -1351,7 +1583,7 @@ const MapScreen = ({ user }) => {
       animationMode: 'easeTo',
     });
     Animated.spring(slideAnim,{toValue:0,useNativeDriver:true,tension:100}).start();
-  }, [slideAnim]);
+  }, [slideAnim, loadNearbyTransport]);
 
   const handleSourcePress = useCallback(async event => {
     const feature = event.features?.[0];
@@ -1403,7 +1635,10 @@ const MapScreen = ({ user }) => {
       animationMode: 'easeTo',
     });
     Animated.timing(slideAnim,{toValue:300,duration:200,useNativeDriver:true}).start(()=>{
-      setShowSheet(false); setSelPub(null);
+      setShowSheet(false);
+      setSelPub(null);
+      setNearbyTransport({ stops: [], parking: [] });
+      setSelectedPoi(null);
     });
   };
 
@@ -1485,12 +1720,38 @@ const MapScreen = ({ user }) => {
             style={mapLayerStyles.pubs}
           />
         </MapboxShapeSource>
-        {selectedPubShape && (
-          <MapboxShapeSource id={SELECTED_PUB_SOURCE_ID} shape={selectedPubShape}>
-            <MapboxCircleLayer id="selected-pub-point" style={mapLayerStyles.selectedPub} />
+      {selectedPubShape && (
+        <MapboxShapeSource id={SELECTED_PUB_SOURCE_ID} shape={selectedPubShape}>
+          <MapboxCircleLayer id="selected-pub-point" style={mapLayerStyles.selectedPub} />
+        </MapboxShapeSource>
+      )}
+      {!!selPub && (
+        <>
+          <MapboxShapeSource
+            id={TRANSPORT_SOURCE_ID}
+            shape={transportShape}
+            onPress={(event) => {
+              const feature = event.features?.[0];
+              if (feature?.properties) setSelectedPoi(feature.properties);
+            }}
+          >
+            <MapboxCircleLayer id="transport-points" style={mapLayerStyles.transport} />
+            <MapboxSymbolLayer id="transport-labels" style={mapLayerStyles.poiLabels} />
           </MapboxShapeSource>
-        )}
-        {routeShape && MapboxLineLayer && (
+          <MapboxShapeSource
+            id={PARKING_SOURCE_ID}
+            shape={parkingShape}
+            onPress={(event) => {
+              const feature = event.features?.[0];
+              if (feature?.properties) setSelectedPoi(feature.properties);
+            }}
+          >
+            <MapboxCircleLayer id="parking-points" style={mapLayerStyles.parking} />
+            <MapboxSymbolLayer id="parking-labels" style={mapLayerStyles.poiLabels} />
+          </MapboxShapeSource>
+        </>
+      )}
+      {routeShape && MapboxLineLayer && (
           <MapboxShapeSource id="route-source" shape={routeShape}>
             <MapboxLineLayer id="route-line" style={{lineColor:C.teal,lineWidth:4,lineOpacity:0.9,lineCap:'round',lineJoin:'round'}}/>
           </MapboxShapeSource>
@@ -1682,6 +1943,23 @@ const MapScreen = ({ user }) => {
               <Text style={s.dimText}>{selPub.opening_hours}</Text>
             </View>
           )}
+          {transportLoading ? (
+            <View style={{flexDirection:'row',alignItems:'center',gap:8,marginTop:6}}>
+              <ActivityIndicator size="small" color={C.amber}/>
+              <Text style={s.dimText}>Načítám dopravu a parkování v okolí…</Text>
+            </View>
+          ) : ((nearbyTransport?.stops?.length || 0) > 0 || (nearbyTransport?.parking?.length || 0) > 0) ? (
+            <View style={s.transportSummary}>
+              <View style={s.transportSummaryItem}>
+                <Ionicons name="train-outline" size={15} color={C.purple}/>
+                <Text style={s.transportSummaryText}>{nearbyTransport.stops.length} zastávek</Text>
+              </View>
+              <View style={s.transportSummaryItem}>
+                <Ionicons name="car-outline" size={15} color={C.teal}/>
+                <Text style={s.transportSummaryText}>{nearbyTransport.parking.length} parkovišť</Text>
+              </View>
+            </View>
+          ) : null}
           <View style={{flexDirection:'row',gap:8,marginTop:10}}>
             {visited.has(selPub.id) ? (
               <View style={[s.btnOk,{flex:1}]}>
@@ -1709,7 +1987,7 @@ const MapScreen = ({ user }) => {
         </Animated.View>
       )}
 
-      {showInfo&&selPub&&<PubDetailModal pub={selPub} onClose={()=>setShowInfo(false)} userId={user.id} />}
+      {showInfo&&selPub&&<PubDetailModal pub={selPub} onClose={()=>setShowInfo(false)} userId={user.id} nearbyTransport={nearbyTransport} />}
       {reportMod&&selPub&&<ReportPubModal pub={selPub} onClose={()=>setReportMod(false)}/>}
       {logModal&&selPub&&(
         <LogModal pub={selPub} user={user} onClose={()=>setLogModal(false)}
@@ -1721,6 +1999,29 @@ const MapScreen = ({ user }) => {
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
       {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
+      {selectedPoi && (
+        <View style={s.poiToast}>
+          <View style={[s.poiIconWrap,{backgroundColor:selectedPoi.kind === 'parking' ? 'rgba(22,160,133,0.18)' : normalizeStopType(selectedPoi.stop_type) === 'train' ? 'rgba(142,68,173,0.18)' : 'rgba(41,128,185,0.18)'}]}>
+            <Ionicons
+              name={selectedPoi.kind === 'parking' ? 'car-outline' : normalizeStopType(selectedPoi.stop_type) === 'train' ? 'train-outline' : 'bus-outline'}
+              size={16}
+              color={selectedPoi.kind === 'parking' ? C.teal : normalizeStopType(selectedPoi.stop_type) === 'train' ? C.purple : C.blue}
+            />
+          </View>
+          <View style={{flex:1}}>
+            <Text style={s.poiName}>{selectedPoi.name || (selectedPoi.kind === 'parking' ? 'Parkoviště' : 'Zastávka')}</Text>
+            <Text style={s.dimText}>
+              {selectedPoi.kind === 'parking'
+                ? `${selectedPoi.distance_label || '—'}${selectedPoi.capacity ? ` · kapacita ${selectedPoi.capacity}` : ''}${selectedPoi.fee ? ' · placené' : ''}`
+                : `${normalizeStopType(selectedPoi.stop_type) === 'train' ? 'Vlak / nádraží' : 'Bus / MHD'} · ${selectedPoi.distance_label || '—'}`}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => setSelectedPoi(null)}>
+            <Ionicons name="close" size={18} color={C.creamDim}/>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {routingMod&&<RoutingModal pubs={pubs} userLoc={loc}
         onRouteReady={(result)=>{
           if (!result) { setRouteShape(null); return; }
@@ -2496,6 +2797,25 @@ const ActivityCalendar = () => {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [active, setActive] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [dayVisits, setDayVisits] = useState([]);
+  const [showDayModal, setShowDayModal] = useState(false);
+  const [selectedPub, setSelectedPub] = useState(null);
+  const [showPubDetail, setShowPubDetail] = useState(false);
+
+  const handleDayClick = async (day) => {
+    const monthStr = month.toString().padStart(2, '0');
+    const dayStr = day.toString().padStart(2, '0');
+    const dateStr = `${year}-${monthStr}-${dayStr}`;
+    try {
+      const visits = await apiFetch(`/visits/my?date=${dateStr}`);
+      setDayVisits(visits);
+      setSelectedDate(dateStr);
+      setShowDayModal(true);
+    } catch (e) {
+      Alert.alert('Chyba', 'Nepodařilo se načíst návštěvy.');
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -2519,53 +2839,110 @@ const ActivityCalendar = () => {
   const numRows = Math.ceil((startOffset + daysInMonth) / 7);
 
   return (
-    <View style={{margin:16,backgroundColor:C.bgCard,borderRadius:16,padding:14,borderWidth:1,borderColor:C.border}}>
-      <Text style={[s.secLabel,{marginBottom:10}]}>Aktivita</Text>
-      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <TouchableOpacity onPress={prevMonth}><Ionicons name="chevron-back" size={20} color={C.amber}/></TouchableOpacity>
-        <Text style={{color:C.cream,fontWeight:'700',fontSize:15}}>{monthName} {year}</Text>
-        <TouchableOpacity onPress={nextMonth}><Ionicons name="chevron-forward" size={20} color={C.amber}/></TouchableOpacity>
+    <><View style={{ margin: 16, backgroundColor: C.bgCard, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.border }}>
+      <Text style={[s.secLabel, { marginBottom: 10 }]}>Aktivita</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <TouchableOpacity onPress={prevMonth}><Ionicons name="chevron-back" size={20} color={C.amber} /></TouchableOpacity>
+        <Text style={{ color: C.cream, fontWeight: '700', fontSize: 15 }}>{monthName} {year}</Text>
+        <TouchableOpacity onPress={nextMonth}><Ionicons name="chevron-forward" size={20} color={C.amber} /></TouchableOpacity>
       </View>
-      {loading ? <ActivityIndicator color={C.amber} style={{marginVertical:10}}/> : (
+      {loading ? <ActivityIndicator color={C.amber} style={{ marginVertical: 10 }} /> : (
         <View>
           {/* Záhlaví dnů týdne */}
-          <View style={{flexDirection:'row',marginBottom:6}}>
-            {['Po','Út','St','Čt','Pá','So','Ne'].map(d=>(
-              <Text key={d} style={{width:cellW,textAlign:'center',color:C.creamDim,fontSize:10,fontWeight:'700'}}>{d}</Text>
+          <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+            {['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'].map(d => (
+              <Text key={d} style={{ width: cellW, textAlign: 'center', color: C.creamDim, fontSize: 10, fontWeight: '700' }}>{d}</Text>
             ))}
           </View>
           {/* Týdenní řádky */}
-          {Array.from({length:numRows},(_,r)=>(
-            <View key={r} style={{flexDirection:'row',marginBottom:3}}>
-              {Array.from({length:7},(_,c)=>{
-                const idx = r*7+c;
+          {Array.from({ length: numRows }, (_, r) => (
+            <View key={r} style={{ flexDirection: 'row', marginBottom: 3 }}>
+              {Array.from({ length: 7 }, (_, c) => {
+                const idx = r * 7 + c;
                 const day = idx - startOffset + 1;
-                if(day<1||day>daysInMonth) return <View key={c} style={{width:cellW,height:cellW}}/>;
+                if (day < 1 || day > daysInMonth) return <View key={c} style={{ width: cellW, height: cellW }} />;
                 const isActive = active.has(day);
-                const isToday  = year===now.getFullYear()&&month===now.getMonth()+1&&day===now.getDate();
+                const isToday = year === now.getFullYear() && month === now.getMonth() + 1 && day === now.getDate();
                 return (
-                  <View key={c} style={{width:cellW,height:cellW,alignItems:'center',justifyContent:'center'}}>
-                    <View style={{width:cellW-5,height:cellW-5,borderRadius:(cellW-5)/2,
-                      backgroundColor:isActive?C.amber:'transparent',
-                      borderWidth:isToday?1.5:0,borderColor:C.teal,
-                      alignItems:'center',justifyContent:'center'}}>
-                      <Text style={{color:isActive?C.bg:isToday?C.teal:C.creamDim,fontSize:11,fontWeight:isActive||isToday?'800':'400'}}>{day}</Text>
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => handleDayClick(day)}
+                    style={{ width: cellW, height: cellW, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <View style={{
+                      width: cellW - 5, height: cellW - 5, borderRadius: (cellW - 5) / 2,
+                      backgroundColor: isActive ? C.amber : 'transparent',
+                      borderWidth: isToday ? 1.5 : 0, borderColor: C.teal,
+                      alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      <Text style={{ color: isActive ? C.bg : isToday ? C.teal : C.creamDim, fontSize: 11, fontWeight: isActive || isToday ? '800' : '400' }}>
+                        {day}
+                      </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
+
                 );
               })}
             </View>
           ))}
         </View>
+
       )}
-    </View>
+    </View><Modal
+      visible={showDayModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowDayModal(false)}
+    >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.6)',
+          justifyContent: 'center',
+          padding: 20
+        }}>
+          <View style={{
+            backgroundColor: C.bgCard,
+            borderRadius: 16,
+            padding: 16
+          }}>
+            <Text style={{ color: C.cream, fontSize: 16, fontWeight: '700', marginBottom: 10 }}>
+              Návštěvy: {selectedDate}
+            </Text>
+
+            {dayVisits.length === 0 ? (
+              <Text style={{ color: C.creamDim }}>Nic tady není… asi detox den 😄</Text>
+            ) : (
+              dayVisits.map((visit, i) => (
+                <Text key={i} style={{ color: C.cream, marginBottom: 6 }}>
+                  • {visit.pub_name || 'Neznámá hospoda'}
+                </Text>
+              ))
+            )}
+
+            <TouchableOpacity
+              onPress={() => setShowDayModal(false)}
+              style={{
+                marginTop: 12,
+                padding: 10,
+                backgroundColor: C.amber,
+                borderRadius: 10,
+                alignItems: 'center'
+              }}
+            >
+              <Text style={{ color: C.bg, fontWeight: '700' }}>Zavřít</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal></>
+  
   );
+  
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PROFILE SCREEN (renovated with likes on my photos and new like notifications)
 // ══════════════════════════════════════════════════════════════════════════════
-const ProfileScreen = ({ user, onLogout }) => {
+const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
   const [me, setMe]             = useState(user);
   const [editBio, setEditBio]   = useState(false);
   const [bio, setBio]           = useState(user.bio||'');
@@ -2830,10 +3207,15 @@ const ProfileScreen = ({ user, onLogout }) => {
           <Ionicons name="trash-outline" size={18} color='#C0392B'/>
           <Text style={{fontSize:15,fontWeight:'600',color:'#C0392B'}}>Smazat účet</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={s.settRow} onPress={onShowTutorial}>
+          <Ionicons name="help-circle-outline" size={18} color={C.amber}/>
+          <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Znovu zobrazit návod</Text>
+          <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
+        </TouchableOpacity>
       </View>
 
       {/* Verze + sociální sítě */}
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.3</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.4</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
@@ -2917,6 +3299,7 @@ export default function App() {
   const [user, setUser]   = useState(null);
   const [boot, setBoot]   = useState(true);
   const [tab, setTab]     = useState('map');
+  const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(()=>{
     (async()=>{
@@ -2939,6 +3322,18 @@ export default function App() {
     })();
   },[]);
 
+  useEffect(() => {
+    if (!user) return;
+    apiFetch('/user/onboarding')
+      .then(res => {
+        if (!res.seen) {
+          setShowTutorial(true);
+          apiFetch('/user/onboarding', {method:'POST', body: JSON.stringify({seen: true})}).catch(()=>{});
+        }
+      })
+      .catch(()=>{});
+  }, [user]);
+
   if(boot) return(
     <View style={[s.center,{backgroundColor:C.bg}]}>
       <Ionicons name="beer" size={64} color={C.amber}/>
@@ -2960,9 +3355,10 @@ export default function App() {
         {tab==='visits'     && <VisitsScreen user={user}/>}
         {tab==='community'  && <CommunityScreen user={user}/>}
         {tab==='challenges' && <ChallengesScreen user={user}/>}
-        {tab==='profile'    && <ProfileScreen user={user} onLogout={()=>setUser(null)}/>}
+        {tab==='profile'    && <ProfileScreen user={user} onLogout={()=>setUser(null)} onShowTutorial={()=>setShowTutorial(true)} />}
       </View>
       <TabBar active={tab} onTab={setTab}/>
+      <TutorialModal visible={showTutorial} onClose={()=>setShowTutorial(false)} />
     </View>
   );
 }
@@ -3036,6 +3432,13 @@ const s = StyleSheet.create({
   reviewCard:{backgroundColor:C.bgCardAlt,borderRadius:12,padding:12,marginBottom:8,borderWidth:1,borderColor:C.border},
   reviewUser:{color:C.cream,fontWeight:'700',fontSize:14},
   reviewNote:{color:C.creamDim,fontSize:13,fontStyle:'italic',marginTop:4},
+  poiRow:{flexDirection:'row',alignItems:'center',gap:10,backgroundColor:C.bgCardAlt,borderRadius:12,padding:10,marginBottom:8,borderWidth:1,borderColor:C.border},
+  poiIconWrap:{width:32,height:32,borderRadius:16,alignItems:'center',justifyContent:'center'},
+  poiName:{color:C.cream,fontWeight:'700',fontSize:14},
+  transportSummary:{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:8},
+  transportSummaryItem:{flexDirection:'row',alignItems:'center',gap:6,backgroundColor:C.bgCardAlt,borderRadius:16,paddingHorizontal:10,paddingVertical:6,borderWidth:1,borderColor:C.border},
+  transportSummaryText:{color:C.cream,fontSize:12,fontWeight:'700'},
+  poiToast:{position:'absolute',left:16,right:16,bottom:230,backgroundColor:'rgba(15,10,0,0.96)',borderRadius:14,padding:12,borderWidth:1,borderColor:C.border,flexDirection:'row',alignItems:'center',gap:10},
 
   // Layer modal
   layerRow:   {flexDirection:'row',alignItems:'center',gap:8,paddingVertical:14,borderBottomWidth:1,borderBottomColor:C.border},
