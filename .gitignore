@@ -1,3 +1,7 @@
 .expo/
 .node_modules/
 node_modules/
+ios/
+android/
+dist/
+./sixth
