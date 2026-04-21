@@ -1,5 +1,6 @@
 /**
- * Hospůdkobraní – App.js v1.4.0
+ * Hospůdkobraní – App.js v1.4.5 (beta, no-production version)
+ * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -17,8 +18,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
+import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
+
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const API = 'https://hospudkobrani-8888.rostiapp.cz/api';
@@ -145,8 +148,25 @@ const apiFetch = async (ep, opts = {}) => {
   return res.json();
 };
 
+// ─── FOLLOW HELPERS ──────────────────────────────────────────────────────────
+const followUser = async (userId) => {
+  const res = await apiFetch(`/users/${userId}/follow`, { method: 'POST' });
+  return res.is_following;
+};
+
+const unfollowUser = async (userId) => {
+  const res = await apiFetch(`/users/${userId}/unfollow`, { method: 'POST' });
+  return res.is_following;
+};
+
+const getFollowersList = async (userId, limit=20) => apiFetch(`/users/${userId}/followers`);
+const getFollowingList = async (userId, limit=20) => apiFetch(`/users/${userId}/following`);
+
+
 // ─── CACHE ────────────────────────────────────────────────────────────────────
 const TTL = 5*60*1000, mem = {};
+
+
 const cached = async (k, fn, ttl=TTL) => {
   const now = Date.now();
   if (mem[k] && now-mem[k].ts < ttl) return mem[k].data;
@@ -218,8 +238,60 @@ const toPoiFeatures = (items = [], kind) => ({
 
 // ─── NOTIFIKACE ───────────────────────────────────────────────────────────────
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
+  handleNotification: async () => ({ 
+    shouldShowBanner: true, 
+    shouldPlaySound: true, 
+    shouldSetBadge: false 
+  }),
 });
+
+// Request permissions + register push token
+async function setupPushNotifications(userId) {
+  if (Platform.OS === 'web') return;
+  
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync({
+      expoPushToken: true,
+    });
+    finalStatus = status;
+  }
+  if (finalStatus !== 'granted') {
+    Alert.alert('Notifikace', 'Notifikace nejsou povoleny, nové likes/followers a chat odpovědi tě neupozorní.');
+    return;
+  }
+
+  const token = (await Notifications.getExpoPushTokenAsync({ projectId: 'your-project-id' })).data;
+  console.log('Expo push token:', token);
+  
+  try {
+    await apiFetch('/notifications/token', { method: 'POST', body: JSON.stringify({ token }) });
+  } catch (e) {
+    console.error('Token registration failed:', e);
+  }
+}
+
+// Handle incoming notifications
+Notifications.addNotificationReceivedListener(notification => {
+  console.log('Notifikace přijata:', notification);
+});
+
+// Handle notification response (tap)
+Notifications.addNotificationResponseReceivedListener(response => {
+  console.log('Notifikace tap:', response);
+  const data = response.notification.request.content.data;
+  if (data.type === 'like') {
+    // Open gallery or specific photo
+  } else if (data.type === 'follow') {
+    // Open Community tab
+  } else if (data.type === 'chat_reply') {
+    // Open chat
+  } else if (data.type === 'visit') {
+    // Open map with pub
+  }
+});
+
 
 async function scheduleLocalNotification(title, body) {
   await Notifications.scheduleNotificationAsync({
@@ -289,14 +361,83 @@ const Stars = ({ rating, size=14, interactive=false, onRate }) => (
   </View>
 );
 
-const Chip = ({ label, color=C.amber, icon }) => (
+const Chip = ({ label, color = C.amber, icon }) => (
   <View style={[s.chip,{borderColor:color}]}>
     {icon && <Ionicons name={icon} size={11} color={color} style={{marginRight:3}} />}
     <Text style={[s.chipText,{color}]}>{label}</Text>
   </View>
 );
 
+// ─── FOLLOW BUTTON ───────────────────────────────────────────────────────────
+const FollowButton = ({ userId, isFollowing, onFollowChange, size='normal' }) => {
+  const [following, setFollowing] = useState(isFollowing);
+  const [loading, setLoading] = useState(false);
+
+  const toggleFollow = async () => {
+    setLoading(true);
+    try {
+      if (following) {
+        await unfollowUser(userId);
+        setFollowing(false);
+        onFollowChange?.(false);
+      } else {
+        await followUser(userId);
+        setFollowing(true);
+        onFollowChange?.(true);
+      }
+    } catch (e) {
+      Alert.alert('Chyba', 'Nepodařilo se aktualizovat sledování.');
+    }
+    setLoading(false);
+  };
+
+  const btnStyle = size === 'small' 
+    ? { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 }
+    : { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 };
+
+  return (
+    <TouchableOpacity 
+      style={[
+        btnStyle,
+        {
+          backgroundColor: following ? C.red : C.amber,
+          borderWidth: 1,
+          borderColor: following ? C.red : C.amber,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: loading ? 0.6 : 1
+        }
+      ]}
+      onPress={toggleFollow}
+      disabled={loading}
+      activeOpacity={0.8}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color={following ? C.white : C.bg} />
+      ) : (
+        <>
+          <Ionicons 
+            name={following ? 'person-remove' : 'person-add'} 
+            size={size === 'small' ? 14 : 16}
+            color={following ? C.white : C.bg} 
+          />
+          <Text style={{
+            fontWeight: '700',
+            fontSize: size === 'small' ? 12 : 14,
+            color: following ? C.white : C.bg,
+            marginLeft: 4
+          }}>
+            {following ? 'Od sledovat' : 'Sledovat'}
+          </Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+};
+
 const getPhotoLikeId = photo => photo?.id ?? photo?.photo_id ?? null;
+
 
 // Fullscreen photo viewer with likes and author click
 const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
@@ -412,71 +553,258 @@ const TutorialModal = ({ visible, onClose }) => {
   );
 };
 
-// User profile modal
-const UserProfileModal = ({ username, selfId, onClose }) => {
-  const [profile, setProfile] = useState(null);
+// ─── FOLLOWERS/FOLLOWING LISTS MODALS ───────────────────────────────────────
+const FollowersListModal = ({ userId, onClose }) => {
   const [loading, setLoading] = useState(true);
-  const [bigAvatar, setBigAvatar] = useState(false);
-  useEffect(()=>{
-    apiFetch(`/users/find?q=${encodeURIComponent(username)}`).then(setProfile).catch(()=>setProfile(null)).finally(()=>setLoading(false));
-  },[username]);
-  const isSelf = profile && profile.id === selfId;
-  const recentVisits = Array.isArray(profile?.visits) ? profile.visits.slice(0, 5) : [];
+  const [users, setUsers] = useState([]);
+  const [userModal, setUserModal] = useState(null);
+
+  useEffect(() => {
+    apiFetch(`/users/${userId}/followers`).then(setUsers).finally(() => setLoading(false));
+  }, [userId]);
+
   return (
-    <Modal visible animationType="slide" transparent>
+    <Modal visible={true} animationType="slide" transparent>
       <View style={s.modalOverlay}>
-        <View style={[s.modalCard,{maxHeight:SH*0.65}]}>
+        <View style={[s.modalCard, { maxHeight: SH * 0.7 }]}>
           <View style={s.modalHeader}>
-            <Text style={s.modalTitle}>Profil Hospůdkobraníka</Text>
-            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            <Text style={s.modalTitle}>Sledující ({users.length})</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
           </View>
-          {loading ? <ActivityIndicator color={C.amber} style={{margin:24}}/> : !profile ? (
-            <Text style={[s.dimText,{margin:20}]}>Profil nenalezen.</Text>
+          {loading ? (
+            <ActivityIndicator color={C.amber} style={{ margin: 24 }} />
           ) : (
-            <View style={{alignItems:'center',paddingVertical:10}}>
-              <Avatar url={profile.avatar_url} size={80}
-                onPress={isSelf ? undefined : ()=>setBigAvatar(true)}
-                style={{marginBottom:10}} />
-              {!isSelf && <Text style={[s.dimText,{fontSize:11,marginBottom:8}]}>Klepni na foto pro zvětšení</Text>}
-              <Text style={s.profileName}>{profile.username}</Text>
-              {profile.bio && <Text style={[s.bioText,{marginTop:6,paddingHorizontal:10}]}>{profile.bio}</Text>}
-              <View style={{flexDirection:'row',gap:12,marginTop:14}}>
-                <View style={s.statBox}><Text style={s.statNum}>{profile.total_visits}</Text><Text style={s.statLabel}>hospůdek</Text></View>
-                <View style={s.statBox}><Text style={s.statNum}>{profile.avg_rating?.toFixed(1)??'–'}</Text><Text style={s.statLabel}>průměr ⭐</Text></View>
-                {profile.firstlast_count > 0 && (
-                  <View style={s.statBox}><Text style={s.statNum}>{profile.firstlast_count}</Text><Text style={s.statLabel}>prvochlasty</Text></View>
-                )}
-              </View>
-              <Text style={[s.dimText,{marginTop:12,fontSize:11}]}>Člen od {new Date(profile.created_at).toLocaleDateString('cs-CZ')}</Text>
-            </View>
+            <FlatList
+              data={users}
+              keyExtractor={u => String(u.id)}
+              renderItem={({ item }) => (
+                <TouchableOpacity 
+                  style={[s.lbRow, { marginBottom: 6, padding: 12 }]}
+                  onPress={() => setUserModal(item.username)}
+                  activeOpacity={0.8}
+                >
+                  <Avatar url={item.avatar_url} size={40} />
+                  <Text style={{ color: C.cream, fontWeight: '700', marginLeft: 10, flex: 1 }}>{item.username}</Text>
+                </TouchableOpacity>
+              )}
+              contentContainerStyle={{ padding: 8 }}
+            />
           )}
         </View>
-        <View>
-          {recentVisits.length > 0 && (
-            <View style={{marginTop: 16, width: '100%'}}>
-              <Text style={[s.secLabel, {fontSize: 14}]}>Nedávné návštěvy</Text>
-              {recentVisits.map(v => (
-                <View key={v.pub_id} style={{flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:C.bgCardAlt, borderRadius:10, padding:8, marginBottom:6}}>
-                  <View>
-                    <Text style={{color:C.cream, fontWeight:'700'}}>{v.pub_name}</Text>
-                    <Stars rating={v.rating} size={10}/>
-                    {v.note && <Text style={{color:C.creamDim, fontSize:11, fontStyle:'italic'}}>"{v.note.substring(0, 50)}"</Text>}
-                  </View>
-                  <Text style={[s.dimText, {fontSize: 10}]}>{new Date(v.logged_at).toLocaleDateString('cs-CZ')}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+        {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={() => setUserModal(null)} />}
       </View>
-      {bigAvatar && profile?.avatar_url && (
-        <PhotoViewer photos={[{url:profile.avatar_url,username:profile.username,id:null,liked:false,like_count:0}]} startIndex={0} onClose={()=>setBigAvatar(false)} userId={selfId} />
-      )}
     </Modal>
   );
 };
 
-// ══════════════════════════════════════════════════════════════════════════════
+
+const FollowingListModal = ({ userId, onClose }) => {
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [userModal, setUserModal] = useState(null);
+
+  useEffect(() => {
+    apiFetch(`/users/${userId}/following`).then(setUsers).finally(() => setLoading(false));
+  }, [userId]);
+
+  return (
+    <Modal visible={true} animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard, { maxHeight: SH * 0.7 }]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Sleduje ({users.length})</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
+          </View>
+          {loading ? (
+            <ActivityIndicator color={C.amber} style={{ margin: 24 }} />
+          ) : (
+            <FlatList
+              data={users}
+              keyExtractor={u => String(u.id)}
+              renderItem={({ item }) => (
+                <TouchableOpacity 
+                  style={[s.lbRow, { marginBottom: 6, padding: 12 }]}
+                  onPress={() => setUserModal(item.username)}
+                  activeOpacity={0.8}
+                >
+                  <Avatar url={item.avatar_url} size={40} />
+                  <Text style={{ color: C.cream, fontWeight: '700', marginLeft: 10, flex: 1 }}>{item.username}</Text>
+                </TouchableOpacity>
+              )}
+              contentContainerStyle={{ padding: 8 }}
+            />
+          )}
+        </View>
+        {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={() => setUserModal(null)} />}
+      </View>
+    </Modal>
+  );
+};
+
+// ─── ENHANCED USER PROFILE MODAL (with follow system) ─────────────────────────
+const UserProfileModal = ({ username, selfId, onClose }) => {
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [bigAvatar, setBigAvatar] = useState(false);
+  const [followersModal, setFollowersModal] = useState(false);
+  const [followingModal, setFollowingModal] = useState(false);
+  const [followState, setFollowState] = useState(false);
+  
+  useEffect(() => {
+    apiFetch(`/users/find?q=${encodeURIComponent(username)}`).then(setProfile).catch(()=>setProfile(null)).finally(()=>setLoading(false));
+  }, [username, selfId]);
+
+  useEffect(() => {
+    if (profile) {
+      // Refresh follow status
+      apiFetch(`/users/find?q=${encodeURIComponent(username)}`)
+        .then(updatedProfile => {
+          if (updatedProfile) {
+            setProfile(updatedProfile);
+            setFollowState(updatedProfile.is_following || false);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [followState]);
+
+  useEffect(() => {
+    if (!profile) return;
+    setFollowState(profile.is_following || false);
+  }, [profile]);
+
+  const isSelf = profile && profile.id === selfId;
+  const recentVisits = Array.isArray(profile?.visits) ? profile.visits.slice(0, 5) : [];
+
+  const handleFollowChange = (newFollowing) => {
+    setFollowState(newFollowing);
+    // Refresh profile data
+    if (profile) {
+      setProfile(prev => ({ ...prev, is_following: newFollowing }));
+    }
+  };
+
+  if (loading) return <View style={s.center}><ActivityIndicator color={C.amber} /></View>;
+
+  const avatarVisible = profile?.avatar_url && (
+    profile.avatar_privacy === 'public' || 
+    isSelf || 
+    profile.is_following
+  );
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard, { maxHeight: SH * 0.75 }]}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Profil Hospůdkobraníka</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
+          </View>
+          {!profile ? (
+            <Text style={[s.dimText, { margin: 20 }]}>Profil nenalezen.</Text>
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+                <Avatar 
+                  url={avatarVisible ? profile.avatar_url : null} 
+                  size={80}
+                  onPress={isSelf ? undefined : () => setBigAvatar(true)}
+                  style={{ marginBottom: 10 }} 
+                />
+                {!isSelf && !avatarVisible && (
+                  <Text style={[s.dimText, { fontSize: 11, marginBottom: 8 }]}>
+                    Profilovka je soukromá (pouze pro sledující)
+                  </Text>
+                )}
+                {!isSelf && avatarVisible && (
+                  <Text style={[s.dimText, { fontSize: 11, marginBottom: 8 }]}>
+                    Klepni na foto pro zvětšení
+                  </Text>
+                )}
+                <Text style={s.profileName}>{profile.username}</Text>
+                {profile.bio && <Text style={[s.bioText, { marginTop: 6, paddingHorizontal: 10 }]}>{profile.bio}</Text>}
+                
+                {/* Follow stats row */}
+                {!isSelf && (
+                  <View style={{ flexDirection: 'row', gap: 20, marginTop: 14, marginBottom: 12 }}>
+                    <TouchableOpacity 
+                      style={s.followStatBox}
+                      onPress={() => setFollowersModal(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.followStatNum, { color: C.purple }]}>{profile.followers_count}</Text>
+                      <Text style={[s.followStatLabel, {color: C.white}]}>Sledující</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={s.followStatBox}
+                      onPress={() => setFollowingModal(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.followStatNum, { color: C.amber }]}>{profile.following_count}</Text>
+                      <Text style={[s.followStatLabel, {color: C.white}]}>Sleduje</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Follow button */}
+                {!isSelf && (
+                  <FollowButton 
+                    userId={profile.id} 
+                    isFollowing={followState}
+                    onFollowChange={handleFollowChange}
+                    size="normal"
+                  />
+                )}
+
+                {/* Main stats */}
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+                  <View style={s.statBox}><Text style={s.statNum}>{profile.total_visits}</Text><Text style={s.statLabel}>hospůdek</Text></View>
+                  <View style={s.statBox}><Text style={s.statNum}>{profile.avg_rating?.toFixed(1) ?? '–'}</Text><Text style={s.statLabel}>průměr ⭐</Text></View>
+                  {profile.firstlast_count > 0 && (
+                    <View style={s.statBox}><Text style={s.statNum}>{profile.firstlast_count}</Text><Text style={s.statLabel}>prvochlasty</Text></View>
+                  )}
+                </View>
+                <Text style={[s.dimText, { marginTop: 12, fontSize: 11 }]}>
+                  Člen od {new Date(profile.created_at).toLocaleDateString('cs-CZ')}
+                </Text>
+              </View>
+
+              {/* Recent visits */}
+              {recentVisits.length > 0 && (
+                <View style={{ marginTop: 20 }}>
+                  <Text style={[s.secLabel, { fontSize: 14 }]}>Nedávné návštěvy</Text>
+                  {recentVisits.map((v, i) => (
+                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.bgCardAlt, borderRadius: 10, padding: 8, marginBottom: 6 }}>
+                      <View>
+                        <Text style={{ color: C.cream, fontWeight: '700' }}>{v.pub_name}</Text>
+                        <Stars rating={v.rating} size={10} />
+                        {v.note && <Text style={{ color: C.creamDim, fontSize: 11, fontStyle: 'italic' }}>"{v.note.substring(0, 50)}"</Text>}
+                      </View>
+                      <Text style={[s.dimText, { fontSize: 10 }]}>{new Date(v.logged_at).toLocaleDateString('cs-CZ')}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+          )}
+        </View>
+
+        {/* Modals */}
+        {bigAvatar && profile?.avatar_url && (
+          <PhotoViewer 
+            photos={[{ url: profile.avatar_url, username: profile.username, id: null, liked: false, like_count: 0 }]} 
+            startIndex={0} 
+            onClose={() => setBigAvatar(false)} 
+            userId={selfId} 
+          />
+        )}
+        {followersModal && <FollowersListModal userId={profile?.id} onClose={() => setFollowersModal(false)} />}
+        {followingModal && <FollowingListModal userId={profile?.id} onClose={() => setFollowingModal(false)} />}
+      </View>
+    </Modal>
+  );
+};
+
 // PUB DETAIL MODAL (with likes on photos)
 // ══════════════════════════════════════════════════════════════════════════════
 const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
@@ -1444,6 +1772,17 @@ const MapScreen = ({ user }) => {
 
   const loadData = async () => {
     try {
+      // Load map viewport setting and saved position
+      const settings = await apiFetch('/profile/settings').catch(() => ({}));
+      const rememberMap = settings.map_remember_position !== false;
+      if (rememberMap) {
+        const savedViewport = await AsyncStorage.getItem('map_viewport');
+        if (savedViewport) {
+          const vp = JSON.parse(savedViewport);
+          setViewport({ center: vp.center || INITIAL_MAP_CENTER, zoom: vp.zoom || 9 });
+        }
+      }
+
       const offPubs = await getOfflinePubs();
       const vd = await cached(`v_${user.id}`,()=>apiFetch('/visits/my'),TTL).catch(async()=>{
         const raw=await AsyncStorage.getItem(`c_v_${user.id}`);
@@ -1462,6 +1801,22 @@ const MapScreen = ({ user }) => {
     } catch(e){console.error(e);}
     finally{setLoading(false);}
   };
+
+  // Save viewport when map moves
+  const handleMapIdle = useCallback(async (state) => {
+    const center = state?.properties?.center;
+    const zoom = state?.properties?.zoom;
+    if (!Array.isArray(center) || !Number.isFinite(zoom)) return;
+    
+    const settings = await apiFetch('/profile/settings').catch(() => ({}));
+    if (settings.map_remember_position !== false) {
+      const vp = { center, zoom };
+      setViewport(vp);
+      AsyncStorage.setItem('map_viewport', JSON.stringify(vp)).catch(() => {});
+    }
+    
+    updateAreaWarning(center[1], center[0]);
+  }, [updateAreaWarning]);
 
   const setupLoc = async () => {
     const {status} = await Location.requestForegroundPermissionsAsync();
@@ -1621,12 +1976,7 @@ const MapScreen = ({ user }) => {
     setSuggestMode(false);
   }, []);
 
-  const handleMapIdle = useCallback(state => {
-    const center = state?.properties?.center;
-    if (!Array.isArray(center)) return;
-    setViewport({ center, zoom: state.properties.zoom });
-    updateAreaWarning(center[1], center[0]);
-  }, [updateAreaWarning]);
+
 
   const closeSheet = ()=>{
     cameraRef.current?.setCamera({
@@ -2261,7 +2611,8 @@ const AuthScreen = ({ onLogin }) => {
       const body=mode==='login'?{email,password:pw}:{email,password:pw,username:nick};
       const data=await apiFetch(mode==='login'?'/auth/login':'/auth/register',{method:'POST',body:JSON.stringify(body)});
       await AsyncStorage.setItem('auth_token',data.token);
-      await AsyncStorage.setItem('user_data',JSON.stringify(data.user));
+await AsyncStorage.setItem('user_data',JSON.stringify(data.user));
+      await setupPushNotifications(data.user.id);
       onLogin(data.user);
     }catch(e){Alert.alert('Chyba',e.message);}
     finally{setBusy(false);}
@@ -2758,12 +3109,13 @@ const GalleryTab = ({ user }) => {
 // Community screen container with sub-tabs
 const CommunityScreen = ({ user }) => {
   const [tab, setTab] = useState('leaderboard');
-  const SUB_TABS = [
+const SUB_TABS = [
     {key:'leaderboard', label:'Žebříček',   icon:'trophy-outline'},
     {key:'chat',        label:'Chaty',       icon:'chatbubbles-outline'},
     {key:'find',        label:'Hledání',     icon:'search-outline'},
     {key:'gallery',     label:'Galerie',     icon:'images-outline'},
   ];
+
   return(
     <View style={s.screen}>
       <View style={s.pageHdr}>
@@ -2783,7 +3135,9 @@ const CommunityScreen = ({ user }) => {
         {tab==='chat'        && <ChatTab user={user}/>}
         {tab==='find'        && <FindUserTab user={user}/>}
         {tab==='gallery'     && <GalleryTab user={user}/>}
+
       </View>
+
     </View>
   );
 };
@@ -3191,31 +3545,100 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
         </View>
       )}
 
-      {/* Settings */}
-      <View style={{margin:16,marginTop:0}}>
-        <Text style={s.secLabel}>Nastavení</Text>
-        <TouchableOpacity style={s.settRow} onPress={()=>setChangePwMod(true)}>
-          <Ionicons name="lock-closed-outline" size={18} color={C.amber}/>
-          <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Změnit heslo</Text>
-          <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.settRow} onPress={logout}>
-          <Ionicons name="log-out-outline" size={18} color={C.red}/>
-          <Text style={{fontSize:15,fontWeight:'600',color:C.red}}>Odhlásit se</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.settRow} onPress={deleteAccount}>
-          <Ionicons name="trash-outline" size={18} color='#C0392B'/>
-          <Text style={{fontSize:15,fontWeight:'600',color:'#C0392B'}}>Smazat účet</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.settRow} onPress={onShowTutorial}>
-          <Ionicons name="help-circle-outline" size={18} color={C.amber}/>
-          <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Znovu zobrazit návod</Text>
-          <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
-        </TouchableOpacity>
+  {/* Settings */}
+  <View style={{margin:16,marginTop:0}}>
+    <Text style={s.secLabel}>Nastavení</Text>
+    
+    {/* Avatar privacy toggle */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const current = me.avatar_privacy || 'public';
+      const newPrivacy = current === 'public' ? 'followers_only' : 'public';
+      try {
+        const res = await apiFetch('/profile/settings', {
+          method: 'PUT',
+          body: JSON.stringify({ avatar_privacy: newPrivacy })
+        });
+        setMe(prev => ({ ...prev, avatar_privacy: newPrivacy }));
+      } catch (e) {
+        Alert.alert('Chyba', e.message);
+      }
+    }}>
+      <Ionicons name="lock-closed-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Profilovka {(me.avatar_privacy === 'followers_only' || me.avatar_privacy === 'private') ? 'pouze sledující' : 'veřejná'}
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{
+          width:20,height:20,borderRadius:10,backgroundColor:(me.avatar_privacy === 'followers_only' || me.avatar_privacy === 'private') ? C.green : C.bgCardAlt,
+          borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'
+        }}>
+          <Ionicons name={(me.avatar_privacy === 'followers_only' || me.avatar_privacy === 'private') ? 'checkmark' : 'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
       </View>
+    </TouchableOpacity>
 
-      {/* Verze + sociální sítě */}
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8}}>Hospůdkobraní v1.4.4</Text>
+    {/* Map remember position toggle */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const current = me.map_remember_position || false;
+      const newSetting = !current;
+      try {
+        await apiFetch('/profile/settings', {
+          method: 'PUT',
+          body: JSON.stringify({ map_remember_position: newSetting })
+        });
+        setMe(prev => ({ ...prev, map_remember_position: newSetting }));
+        if (!newSetting) {
+          await AsyncStorage.removeItem('map_viewport');
+        }
+      } catch (e) {
+        Alert.alert('Chyba', e.message);
+      }
+    }}>
+      <Ionicons name="bookmark-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Ukládat pozici mapy {(me.map_remember_position === true) ? 'zapnuto' : 'vypnuto'}
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{
+          width:20,height:20,borderRadius:10,backgroundColor:(me.map_remember_position === true) ? C.green : C.bgCardAlt,
+          borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'
+        }}>
+          <Ionicons name={(me.map_remember_position === true) ? 'checkmark' : 'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
+      </View>
+    </TouchableOpacity>
+
+    <TouchableOpacity style={s.settRow} onPress={()=>setChangePwMod(true)}>
+      <Ionicons name="lock-closed-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Změnit heslo</Text>
+      <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
+    </TouchableOpacity>
+    <TouchableOpacity style={s.settRow} onPress={logout}>
+      <Ionicons name="log-out-outline" size={18} color={C.red}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.red}}>Odhlásit se</Text>
+    </TouchableOpacity>
+    <TouchableOpacity style={s.settRow} onPress={deleteAccount}>
+      <Ionicons name="trash-outline" size={18} color='#C0392B'/>
+      <Text style={{fontSize:15,fontWeight:'600',color:'#C0392B'}}>Smazat účet</Text>
+    </TouchableOpacity>
+    <TouchableOpacity style={s.settRow} onPress={onShowTutorial}>
+      <Ionicons name="help-circle-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Znovu zobrazit návod</Text>
+      <Ionicons name="chevron-forward" size={16} color={C.border} style={{marginLeft:'auto'}}/>
+    </TouchableOpacity>
+  </View>
+
+
+      {/* Verze + sociální sítě + GDPR + Copyrighty */}
+      <TouchableOpacity onPress={() => Alert.alert(
+        'GDPR & Copyright Info',
+        `GDPR INFORMACE:\n\nTato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\nShromažďované údaje:\n- Uživatelské jméno, email, heslo\n- Poloha zařízení pro mapové funkce\n- Fotografie a komentáře\n- Statistiky návštěv hospod\n\nÚdaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.\n\nPráva uživatele:\n- Právo na přístup k údajům\n- Právo na opravu\n- Právo na výmaz\n- Kontakt: noemiamisa@gmail.com\n\nCOPYRIGHTY:\n\n© Mapbox - Mapové dlaždice a data\n© GraphHopper - Směrovací služby\n© React Native & Expo - Framework\n© Michal Schneider - Kód aplikace, styl mapy apod.\n\nVšechna práva vyhrazena.`
+      )}>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.5 (BETA) - GDPR & Copyright Info</Text>
+      </TouchableOpacity>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
