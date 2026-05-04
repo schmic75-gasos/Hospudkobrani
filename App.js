@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.5 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.6 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -258,17 +258,18 @@ async function setupPushNotifications(userId) {
     finalStatus = status;
   }
   if (finalStatus !== 'granted') {
-    Alert.alert('Notifikace', 'Notifikace nejsou povoleny, nové likes/followers a chat odpovědi tě neupozorní.');
+    console.log('Push notifications not granted – skipping token registration.');
     return;
   }
 
-  const token = (await Notifications.getExpoPushTokenAsync({ projectId: 'your-project-id' })).data;
-  console.log('Expo push token:', token);
-  
   try {
+    const token = (await Notifications.getExpoPushTokenAsync({
+      projectId: 'e549e18b-82ac-48e2-a4f1-de06e3b76931',
+    })).data;
+    console.log('Expo push token:', token);
     await apiFetch('/notifications/token', { method: 'POST', body: JSON.stringify({ token }) });
   } catch (e) {
-    console.error('Token registration failed:', e);
+    console.warn('Push token registration failed (non-fatal):', e);
   }
 }
 
@@ -869,6 +870,18 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
               <TouchableOpacity onPress={sharePub}>
                 <Ionicons name="share-outline" size={19} color={C.creamDim}/>
               </TouchableOpacity>
+              <TouchableOpacity onPress={()=>{
+                const lat=pub.latitude, lng=pub.longitude, label=encodeURIComponent(pub.name);
+                const url=Platform.OS==='ios'
+                  ? `maps://?q=${label}&ll=${lat},${lng}&dirflg=d`
+                  : `geo:${lat},${lng}?q=${lat},${lng}(${label})`;
+                Linking.canOpenURL(url).then(ok=>{
+                  if(ok){ Linking.openURL(url); }
+                  else { Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`); }
+                });
+              }}>
+                <Ionicons name="navigate-outline" size={19} color={C.teal}/>
+              </TouchableOpacity>
               <TouchableOpacity onPress={()=>setReportMod(true)}>
                 <Ionicons name="flag-outline" size={19} color={C.creamDim}/>
               </TouchableOpacity>
@@ -890,9 +903,19 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
 
             {pub.address && (
               <TouchableOpacity style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:6}} activeOpacity={0.7}
-                onPress={()=>Linking.openURL(`https://nominatim.openstreetmap.org/ui/search.html?q=${encodeURIComponent(pub.address)}`)}>
-                <Ionicons name="location-outline" size={14} color={C.blue}/>
-                <Text style={[s.dimText,{color:C.blue,textDecorationLine:'underline'}]}>{pub.address}</Text>
+                onPress={()=>{
+                  const lat=pub.latitude, lng=pub.longitude, label=encodeURIComponent(pub.name);
+                  const url=Platform.OS==='ios'
+                    ? `maps://?q=${label}&ll=${lat},${lng}&dirflg=d`
+                    : `geo:${lat},${lng}?q=${lat},${lng}(${label})`;
+                  Linking.canOpenURL(url).then(ok=>{
+                    if(ok){ Linking.openURL(url); }
+                    else { Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`); }
+                  });
+                }}>
+                <Ionicons name="navigate-outline" size={14} color={C.teal}/>
+                <Text style={[s.dimText,{color:C.teal,textDecorationLine:'underline',flex:1}]}>{pub.address}</Text>
+                <Ionicons name="open-outline" size={12} color={C.teal}/>
               </TouchableOpacity>
             )}
             {pub.opening_hours && (
@@ -1500,6 +1523,7 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
   const [calculating, setCalc]  = useState(false);
   const [routeInfo, setRouteInfo] = useState(null);
   const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
+  const [pubPickerQ, setPubPickerQ] = useState(''); // search query in pub picker
 
   const setWp = (idx, wp) => setWaypoints(prev => { const n=[...prev]; n[idx]=wp; return n; });
   const addWp = () => setWaypoints(prev => [...prev, null]);
@@ -1651,25 +1675,37 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
       {pubPicker!==null && (
         <Modal visible animationType="slide" transparent>
           <View style={s.modalOverlay}>
-            <View style={[s.modalCard,{maxHeight:SH*0.7}]}>
+            <View style={[s.modalCard,{maxHeight:SH*0.75}]}>
               <View style={s.modalHeader}>
                 <Text style={s.modalTitle}>Vybrat hospůdku</Text>
-                <TouchableOpacity onPress={()=>setPubPicker(null)}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+                <TouchableOpacity onPress={()=>{ setPubPicker(null); setPubPickerQ(''); }}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
               </View>
+              <TextInput
+                style={[s.input,{marginBottom:10}]}
+                placeholder="Hledat podle názvu…"
+                placeholderTextColor={C.creamDim}
+                value={pubPickerQ}
+                onChangeText={setPubPickerQ}
+                autoFocus
+                autoCorrect={false}
+                clearButtonMode="while-editing"
+              />
               <FlatList
-                data={pubs.filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude))}
+                data={pubs.filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude)&&(pubPickerQ.trim().length<2||p.name.toLowerCase().includes(pubPickerQ.trim().toLowerCase())))}
                 keyExtractor={p=>String(p.id)}
+                keyboardShouldPersistTaps="handled"
                 renderItem={({item})=>(
                   <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
-                    onPress={()=>{ setWp(pubPicker,{label:item.name, lat:item.latitude, lng:item.longitude}); setPubPicker(null); }}>
-                    <Ionicons name="beer-outline" size={18} color={C.amber} style={{marginRight:8}}/>
+                    onPress={()=>{ setWp(pubPicker,{label:item.name, lat:item.latitude, lng:item.longitude}); setPubPicker(null); setPubPickerQ(''); }}>
+                    <Ionicons name={visited.has?.(item.id)?'checkmark-circle':'beer-outline'} size={18} color={visited.has?.(item.id)?C.green:C.amber} style={{marginRight:8}}/>
                     <View style={{flex:1}}>
                       <Text style={{color:C.cream,fontWeight:'700'}}>{item.name}</Text>
-                      <Text style={s.dimText}>{item.type}</Text>
+                      <Text style={s.dimText}>{[item.type,item.city].filter(Boolean).join(' · ')}</Text>
                     </View>
                   </TouchableOpacity>
                 )}
-                contentContainerStyle={{padding:8}}
+                contentContainerStyle={{padding:8,paddingBottom:20}}
+                ListEmptyComponent={<Text style={{color:C.creamDim,textAlign:'center',padding:20}}>Žádný podnik nenalezen.</Text>}
               />
             </View>
           </View>
@@ -2327,6 +2363,25 @@ const MapScreen = ({ user }) => {
                 <Text style={s.btnPriT}>Odkliknout</Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              style={[s.btnSec,{paddingHorizontal:12}]}
+              onPress={()=>{
+                const lat=selPub.latitude, lng=selPub.longitude;
+                const label=encodeURIComponent(selPub.name);
+                const url=Platform.OS==='ios'
+                  ? `maps://?q=${label}&ll=${lat},${lng}&dirflg=d`
+                  : `geo:${lat},${lng}?q=${lat},${lng}(${label})`;
+                Linking.canOpenURL(url).then(ok=>{
+                  if(ok){ Linking.openURL(url); }
+                  else {
+                    // fallback to Google Maps in browser
+                    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`);
+                  }
+                });
+              }}
+            >
+              <Ionicons name="navigate" size={20} color={C.teal}/>
+            </TouchableOpacity>
             <TouchableOpacity style={[s.btnSec,{paddingHorizontal:12}]} onPress={()=>setReportMod(true)}>
               <Ionicons name="flag-outline" size={20} color={C.creamDim}/>
             </TouchableOpacity>
@@ -2918,7 +2973,12 @@ const ChatTab = ({ user }) => {
   useEffect(()=>{ loadMsgs(); const t=setInterval(loadMsgs,10000); return()=>clearInterval(t); },[]);
 
   const loadMsgs = async()=>{
-    try{ const d=await apiFetch('/community/chat?limit=50'); setMsgs(d); }
+    try{
+      const d=await apiFetch('/community/chat?limit=50');
+      // API vrací zprávy od nejnovější – obrátíme na chronologické pořadí (nejstarší nahoře)
+      const sorted = Array.isArray(d) ? [...d].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)) : [];
+      setMsgs(sorted);
+    }
     catch{}
     setLoading(false);
   };
@@ -2928,7 +2988,9 @@ const ChatTab = ({ user }) => {
     setSending(true); setText('');
     try{
       await apiFetch('/community/chat',{method:'POST',body:JSON.stringify({message:t})});
-      loadMsgs();
+      await loadMsgs();
+      // scroll to bottom after sending
+      setTimeout(()=>listRef.current?.scrollToEnd({animated:true}), 100);
     }catch(e){Alert.alert('Chyba',e.message);}
     finally{setSending(false);}
   };
@@ -2965,10 +3027,18 @@ const ChatTab = ({ user }) => {
   if(loading)return <View style={s.center}><ActivityIndicator color={C.amber}/></View>;
   return(
     <View style={{flex:1}}>
-      <FlatList ref={listRef} data={[...msgs].reverse()} keyExtractor={i=>String(i.id)} renderItem={renderItem}
-        contentContainerStyle={{padding:12,paddingBottom:4}} inverted
-        onContentSizeChange={()=>listRef.current?.scrollToOffset({offset:0})}
-      />
+      <ScrollView
+        ref={listRef}
+        contentContainerStyle={{padding:12,paddingBottom:4}}
+        onContentSizeChange={()=>listRef.current?.scrollToEnd({animated:false})}
+        onLayout={()=>listRef.current?.scrollToEnd({animated:false})}
+      >
+        {msgs.map(item=>(
+          <React.Fragment key={String(item.id)}>
+            {renderItem({item})}
+          </React.Fragment>
+        ))}
+      </ScrollView>
       <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'}>
         <View style={s.chatInput}>
           <TextInput style={[s.input,{flex:1,marginBottom:0}]} placeholder="Zpráva…" placeholderTextColor={C.creamDim}
@@ -3636,7 +3706,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
         'GDPR & Copyright Info',
         `GDPR INFORMACE:\n\nTato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\nShromažďované údaje:\n- Uživatelské jméno, email, heslo\n- Poloha zařízení pro mapové funkce\n- Fotografie a komentáře\n- Statistiky návštěv hospod\n\nÚdaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.\n\nPráva uživatele:\n- Právo na přístup k údajům\n- Právo na opravu\n- Právo na výmaz\n- Kontakt: noemiamisa@gmail.com\n\nCOPYRIGHTY:\n\n© Mapbox - Mapové dlaždice a data\n© GraphHopper - Směrovací služby\n© React Native & Expo - Framework\n© Michal Schneider - Kód aplikace, styl mapy apod.\n\nVšechna práva vyhrazena.`
       )}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.5 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.6 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
@@ -3669,17 +3739,17 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
               autoFocus
             />
             <View style={{flexDirection:'row',gap:10,marginTop:4}}>
-              <TouchableOpacity style={[s.btn,{flex:1,backgroundColor:C.bgCardAlt}]} onPress={()=>setDelAccMod(false)}>
-                <Text style={[s.btnTxt,{color:C.cream}]}>Zrušit</Text>
+              <TouchableOpacity style={[s.btnSec,{flex:1,justifyContent:'center'}]} onPress={()=>setDelAccMod(false)}>
+                <Text style={{color:C.cream,textAlign:'center',fontWeight:'600'}}>Zrušit</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.btn,{flex:1,backgroundColor:C.red,opacity:delLoading||!delPw?0.5:1}]}
+                style={[s.btnPri,{flex:1,backgroundColor:C.red,opacity:delLoading||!delPw?0.5:1}]}
                 onPress={confirmDeleteAccount}
                 disabled={delLoading||!delPw}
               >
                 {delLoading
                   ? <ActivityIndicator color={C.white} size="small"/>
-                  : <Text style={s.btnTxt}>Smazat účet</Text>}
+                  : <Text style={s.btnPriT}>Smazat účet</Text>}
               </TouchableOpacity>
             </View>
           </View>
@@ -3952,6 +4022,11 @@ const s = StyleSheet.create({
   empty:     {alignItems:'center',marginTop:80},
   emptyT:    {color:C.cream,fontSize:18,fontWeight:'700',marginTop:12},
   emptySub:  {color:C.creamDim,fontSize:14,marginTop:6,textAlign:'center'},
+
+  // Follow stats
+  followStatBox: {alignItems:'center',minWidth:70,padding:8,backgroundColor:'rgba(255,255,255,0.04)',borderRadius:12,borderWidth:1,borderColor:'rgba(255,255,255,0.08)'},
+  followStatNum:  {fontSize:20,fontWeight:'900'},
+  followStatLabel:{color:'rgba(255,255,255,0.6)',fontSize:11,marginTop:2},
 
   // Tab bar
   tabBar:   {flexDirection:'row',backgroundColor:C.tabBar,borderTopWidth:1,borderTopColor:C.border,paddingBottom:Platform.OS==='ios'?24:8,paddingTop:8},
