@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.6 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.7 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -28,6 +28,10 @@ const API = 'https://hospudkobrani-8888.rostiapp.cz/api';
 
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzdsdjEifQ.7BWpQMyfYfi9sDoGZt7lFQ';
 const MAPBOX_STYLE_URL = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
+const MAPBOX_STYLE_OPTIONS = [
+  { id: 'hospudkobrani', label: 'Hospůdkobranická mapa', url: MAPBOX_STYLE_URL },
+  { id: 'basic', label: 'Základní mapa', url: 'mapbox://styles/thisik/cmoyl7ob5002h01sb8uh4fumf' },
+];
 const INITIAL_MAP_CENTER = [13.3736, 49.7384];
 const PUBS_SOURCE_ID = 'pubs-source';
 const SELECTED_PUB_SOURCE_ID = 'selected-pub-source';
@@ -1248,7 +1252,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
         if (!exists) {
           await MapboxNative.offlineManager.createPack({
             name: `map_${country.code}`,
-            styleURL: MAPBOX_STYLE_URL,
+            styleURL: activeMapStyleUrl,
             bounds: [
               [country.bounds.minLng, country.bounds.minLat],
               [country.bounds.maxLng, country.bounds.maxLat]
@@ -1525,7 +1529,14 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
   const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
   const [pubPickerQ, setPubPickerQ] = useState(''); // search query in pub picker
 
-  const setWp = (idx, wp) => setWaypoints(prev => { const n=[...prev]; n[idx]=wp; return n; });
+  const isValidCoord = value => Number.isFinite(Number(value));
+  const setWp = (idx, wp) => setWaypoints(prev => {
+    const n = [...prev];
+    if (typeof idx === 'number' && idx >= 0 && idx < n.length) {
+      n[idx] = wp;
+    }
+    return n;
+  });
   const addWp = () => setWaypoints(prev => [...prev, null]);
   const removeWp = idx => setWaypoints(prev => prev.filter((_,i)=>i!==idx));
   const moveWpUp = idx => setWaypoints(prev => {
@@ -1691,15 +1702,23 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
                 clearButtonMode="while-editing"
               />
               <FlatList
-                data={pubs.filter(p=>Number.isFinite(p.latitude)&&Number.isFinite(p.longitude)&&(pubPickerQ.trim().length<2||p.name.toLowerCase().includes(pubPickerQ.trim().toLowerCase())))}
+                data={pubs.filter(p => isValidCoord(p.latitude) && isValidCoord(p.longitude) && (pubPickerQ.trim().length < 2 || String(p.name || '').toLowerCase().includes(pubPickerQ.trim().toLowerCase())))}
                 keyExtractor={p=>String(p.id)}
                 keyboardShouldPersistTaps="handled"
                 renderItem={({item})=>(
                   <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
-                    onPress={()=>{ setWp(pubPicker,{label:item.name, lat:item.latitude, lng:item.longitude}); setPubPicker(null); setPubPickerQ(''); }}>
+                    onPress={()=>{
+                      setWp(pubPicker, {
+                        label: String(item.name || 'Vybraná hospůdka'),
+                        lat: Number(item.latitude),
+                        lng: Number(item.longitude),
+                      });
+                      setPubPicker(null);
+                      setPubPickerQ('');
+                    }}>
                     <Ionicons name={visited.has?.(item.id)?'checkmark-circle':'beer-outline'} size={18} color={visited.has?.(item.id)?C.green:C.amber} style={{marginRight:8}}/>
                     <View style={{flex:1}}>
-                      <Text style={{color:C.cream,fontWeight:'700'}}>{item.name}</Text>
+                      <Text style={{color:C.cream,fontWeight:'700'}}>{item.name || 'Bez názvu'}</Text>
                       <Text style={s.dimText}>{[item.type,item.city].filter(Boolean).join(' · ')}</Text>
                     </View>
                   </TouchableOpacity>
@@ -1749,10 +1768,16 @@ const MapScreen = ({ user }) => {
   const [routingMod, setRoutingMod]     = useState(false);
   const [searchMod, setSearchMod]       = useState(false);
   const [searchQ, setSearchQ]           = useState('');
+  const [mapStyleId, setMapStyleId]     = useState(MAPBOX_STYLE_OPTIONS[0].id);
+  const [stylePickerOpen, setStylePickerOpen] = useState(false);
   const [nearbyTransport, setNearbyTransport] = useState({ stops: [], parking: [] });
   const [transportLoading, setTransportLoading] = useState(false);
   const [selectedPoi, setSelectedPoi]   = useState(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
+
+  const activeMapStyleUrl = useMemo(() => {
+    return MAPBOX_STYLE_OPTIONS.find(s => s.id === mapStyleId)?.url || MAPBOX_STYLE_URL;
+  }, [mapStyleId]);
 
   const fCount = useMemo(()=>{
     let n=0;
@@ -2058,7 +2083,7 @@ const MapScreen = ({ user }) => {
     <View style={{flex:1}}>
       <MapboxMapView
         style={{flex:1}}
-        styleURL={MAPBOX_STYLE_URL}
+        styleURL={activeMapStyleUrl}
         preferredFramesPerSecond={60}
         compassEnabled
         compassFadeWhenNorth
@@ -2176,6 +2201,10 @@ const MapScreen = ({ user }) => {
         <TouchableOpacity style={s.mapBtn} onPress={()=>setOffReg(true)}>
           <Ionicons name="download-outline" size={22} color={C.creamDim}/>
         </TouchableOpacity>
+        <TouchableOpacity style={[s.mapBtn, mapStyleId!==MAPBOX_STYLE_OPTIONS[0].id && {borderColor:C.amber,borderWidth:2}]}
+          onPress={()=>setStylePickerOpen(true)}>
+          <Ionicons name="layers-outline" size={22} color={C.creamDim}/>
+        </TouchableOpacity>
         <TouchableOpacity style={[s.mapBtn,suggestMode&&{borderColor:C.amber,borderWidth:2}]}
           onPress={()=>{
             const next=!suggestModeRef.current;
@@ -2219,6 +2248,31 @@ const MapScreen = ({ user }) => {
             Nemáš staženou offline oblast pro {currentAreaName || 'tuto oblast'}. Stáhni ji v 📥 menu.
           </Text>
         </View>
+      )}
+
+      {stylePickerOpen && (
+        <Modal visible animationType="fade" transparent onRequestClose={()=>setStylePickerOpen(false)}>
+          <View style={{flex:1,backgroundColor:'rgba(0,0,0,0.6)',justifyContent:'center',padding:20}}>
+            <View style={[s.modalCard,{padding:16}]}> 
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Vybrat vrstvu mapy</Text>
+                <TouchableOpacity onPress={()=>setStylePickerOpen(false)}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+              </View>
+              {MAPBOX_STYLE_OPTIONS.map(option => (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[s.ansBtn, mapStyleId === option.id && s.ansBtnOn]}
+                  onPress={() => {
+                    setMapStyleId(option.id);
+                    setStylePickerOpen(false);
+                  }}
+                >
+                  <Text style={[s.ansT, mapStyleId === option.id && {color: C.cream}]}>{option.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </Modal>
       )}
 
       {/* Search modal */}
@@ -3706,7 +3760,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
         'GDPR & Copyright Info',
         `GDPR INFORMACE:\n\nTato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\nShromažďované údaje:\n- Uživatelské jméno, email, heslo\n- Poloha zařízení pro mapové funkce\n- Fotografie a komentáře\n- Statistiky návštěv hospod\n\nÚdaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.\n\nPráva uživatele:\n- Právo na přístup k údajům\n- Právo na opravu\n- Právo na výmaz\n- Kontakt: noemiamisa@gmail.com\n\nCOPYRIGHTY:\n\n© Mapbox - Mapové dlaždice a data\n© GraphHopper - Směrovací služby\n© React Native & Expo - Framework\n© Michal Schneider - Kód aplikace, styl mapy apod.\n\nVšechna práva vyhrazena.`
       )}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.6 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.7 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
