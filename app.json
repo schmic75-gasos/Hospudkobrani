@@ -1,5 +1,6 @@
 {
   "expo": {
+      "scheme": "hospudkobrani",
     "name": "Hospůdkobraní",
     "slug": "hospudkobrani",
     "version": "1.4.4",
@@ -21,6 +22,8 @@
         "NSPhotoLibraryUsageDescription": "Přidat fotku z galerie.",
         "ITSAppUsesNonExemptEncryption": false
       }
+      ,
+      "associatedDomains": ["applinks:hospudkobrani-8888.rostiapp.cz"]
     },
     "android": {
       "adaptiveIcon": {
@@ -35,6 +38,20 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.RECORD_AUDIO"
+      ]
+      ,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "hospudkobrani-8888.rostiapp.cz",
+              "pathPrefix": "/pub"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
       ]
     },
     "plugins": [

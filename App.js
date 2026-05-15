@@ -1820,7 +1820,7 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // MAP SCREEN – WebView + Mapbox GL JS
 // ══════════════════════════════════════════════════════════════════════════════
-const MapScreen = ({ user }) => {
+const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   const cameraRef       = useRef(null);
   const shapeSourceRef  = useRef(null);
   const hasCenteredRef  = useRef(false);
@@ -2083,6 +2083,36 @@ const MapScreen = ({ user }) => {
     });
     Animated.spring(slideAnim,{toValue:0,useNativeDriver:true,tension:100}).start();
   }, [slideAnim, loadNearbyTransport]);
+
+  // If app was opened via deep link with pub id, try to open that pub
+  useEffect(()=>{
+    if(!deepLinkPubId) return;
+    const id = String(deepLinkPubId);
+    const found = pubs.find(p => String(p.id) === id);
+    if(found){
+      openPub(found);
+      onDeepLinkHandled && onDeepLinkHandled();
+      return;
+    }
+    // try fetch from API (may require auth)
+    (async()=>{
+      try{
+        const pub = await apiFetch(`/pubs/${id}`);
+        if(pub){
+          // if pubs list doesn't contain it, add temporarily
+          setPubs(prev => prev.some(p=>String(p.id)===String(pub.id)) ? prev : [...prev, pub]);
+          openPub(pub);
+        } else {
+          // fallback to web preview
+          Linking.openURL(`${API.replace('/api','')}/pub/${id}`);
+        }
+      }catch(e){
+        Linking.openURL(`${API.replace('/api','')}/pub/${id}`);
+      }finally{
+        onDeepLinkHandled && onDeepLinkHandled();
+      }
+    })();
+  },[deepLinkPubId, pubs]);
 
   const handleSourcePress = useCallback(async event => {
     const feature = event.features?.[0];
@@ -4021,6 +4051,7 @@ export default function App() {
   const [user, setUser]   = useState(null);
   const [boot, setBoot]   = useState(true);
   const [tab, setTab]     = useState('map');
+  const [deepLinkPubId, setDeepLinkPubId] = useState(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(()=>{
@@ -4042,6 +4073,26 @@ export default function App() {
       }catch{}
       setBoot(false);
     })();
+  },[]);
+
+  // Deep linking: handle incoming URLs (hospudkobrani://pub/123 or https://.../pub/123)
+  useEffect(()=>{
+    const parseAndHandle = (url) => {
+      if(!url) return;
+      try{
+        const m = String(url).match(/pub\/(\d+)/);
+        if(m && m[1]){
+          setTab('map');
+          setDeepLinkPubId(m[1]);
+        }
+      }catch(e){/* ignore */}
+    };
+    // initial
+    Linking.getInitialURL().then(url=>parseAndHandle(url)).catch(()=>{});
+    // listener
+    const onUrl = ({url}) => parseAndHandle(url);
+    const sub = Linking.addEventListener ? Linking.addEventListener('url', onUrl) : Linking.addListener('url', onUrl);
+    return ()=>{ try{sub.remove?.();}catch(e){} };
   },[]);
 
   useEffect(() => {
@@ -4072,7 +4123,7 @@ export default function App() {
       <View style={{flex:1}}>
         {/* MapScreen zůstává namountovaný – předchází šedé obrazovce po přepnutí */}
         <View style={{flex:1,display: tab==='map' ? 'flex' : 'none'}}>
-          <MapScreen user={user}/>
+          <MapScreen user={user} deepLinkPubId={deepLinkPubId} onDeepLinkHandled={()=>setDeepLinkPubId(null)}/>
         </View>
         {tab==='visits'     && <VisitsScreen user={user}/>}
         {tab==='community'  && <CommunityScreen user={user}/>}
