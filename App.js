@@ -16,7 +16,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
-import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
@@ -324,20 +323,35 @@ TaskManager.defineTask(DATASET_CHECK_TASK, async () => {
         );
       }
     }
-    return BackgroundFetch.Result.NewData;
+    try{
+      const BF = require('expo-background-fetch');
+      return BF?.Result?.NewData || 'NewData';
+    }catch(e){
+      return 'NewData';
+    }
   } catch (e) {
-    return BackgroundFetch.Result.Failed;
+    try{
+      const BF = require('expo-background-fetch');
+      return BF?.Result?.Failed || 'Failed';
+    }catch(ex){
+      return 'Failed';
+    }
   }
 });
 
 async function registerBackgroundFetch() {
-  const status = await BackgroundFetch.getStatusAsync();
-  if (status !== BackgroundFetch.Status.Available) return;
-  await BackgroundFetch.registerTaskAsync(DATASET_CHECK_TASK, {
-    minimumInterval: 5 * 60, // 5 minut
-    stopOnTerminate: false,
-    startOnBoot: true,
-  });
+  try{
+    const BF = require('expo-background-fetch');
+    const status = await BF.getStatusAsync();
+    if (status !== BF.Status.Available) return;
+    await BF.registerTaskAsync(DATASET_CHECK_TASK, {
+      minimumInterval: 5 * 60, // 5 minut
+      stopOnTerminate: false,
+      startOnBoot: true,
+    });
+  }catch(e){
+    // expo-background-fetch není dostupné nebo je deprecated — přeskočíme registraci
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -858,10 +872,21 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
   };
 
   const sharePub = () => {
-    Share.share({
-      message: `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!\nhttps://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`,
-      title: pub.name,
-    }).catch(()=>{});
+    (async () => {
+      try {
+        const res = await apiFetch(`/pubs/${pub.id}/share`);
+        const web = res.web_url || res.url || `https://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`;
+        const appLink = res.app_link || `hospudkobrani://pub/${pub.id}`;
+        // Share web link (recipients without app will see web page); include app link for clients that support it
+        await Share.share({
+          message: `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!\n${web}\n${appLink}`,
+          title: pub.name,
+        });
+      } catch (e) {
+        // fallback
+        Share.share({ message: `https://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`, title: pub.name }).catch(()=>{});
+      }
+    })();
   };
 
   return (
@@ -1528,6 +1553,29 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
   const [routeInfo, setRouteInfo] = useState(null);
   const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
   const [pubPickerQ, setPubPickerQ] = useState(''); // search query in pub picker
+  const [pubPickerMode, setPubPickerMode] = useState('pubs'); // 'pubs' or 'stops'
+  const [pubPickerStops, setPubPickerStops] = useState([]);
+  const [loadingStops, setLoadingStops] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    const loadStops = async () => {
+      if (pubPicker === null || pubPickerMode !== 'stops') return;
+      setLoadingStops(true);
+      try {
+        const centerLat = userLoc ? userLoc.latitude : INITIAL_MAP_CENTER[1];
+        const centerLng = userLoc ? userLoc.longitude : INITIAL_MAP_CENTER[0];
+        const res = await apiFetch(`/transport/nearby?lat=${centerLat}&lng=${centerLng}&radius=20000`);
+        if (!mounted) return;
+        setPubPickerStops(res.stops || []);
+      } catch (e) {
+        if (!mounted) return;
+        setPubPickerStops([]);
+      }
+      setLoadingStops(false);
+    };
+    loadStops();
+    return () => { mounted = false; };
+  }, [pubPicker, pubPickerMode, userLoc]);
 
   const isValidCoord = value => Number.isFinite(Number(value));
   const setWp = (idx, wp) => setWaypoints(prev => {
@@ -1691,7 +1739,15 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
                 <Text style={s.modalTitle}>Vybrat hospůdku</Text>
                 <TouchableOpacity onPress={()=>{ setPubPicker(null); setPubPickerQ(''); }}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
               </View>
-              <TextInput
+                <View style={{flexDirection:'row',gap:8,marginBottom:10}}>
+                  <TouchableOpacity style={[s.ansBtn,pubPickerMode==='pubs'&&s.ansBtnOn]} onPress={()=>setPubPickerMode('pubs')}>
+                    <Text style={[s.ansT,pubPickerMode==='pubs'&&{color:C.cream}]}>Podniky</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.ansBtn,pubPickerMode==='stops'&&s.ansBtnOn]} onPress={async ()=>{ setPubPickerMode('stops'); }}>
+                    <Text style={[s.ansT,pubPickerMode==='stops'&&{color:C.cream}]}>Zastávky</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
                 style={[s.input,{marginBottom:10}]}
                 placeholder="Hledat podle názvu…"
                 placeholderTextColor={C.creamDim}
@@ -1701,28 +1757,55 @@ const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
                 autoCorrect={false}
                 clearButtonMode="while-editing"
               />
-              <FlatList
-                data={pubs.filter(p => isValidCoord(p.latitude) && isValidCoord(p.longitude) && (pubPickerQ.trim().length < 2 || String(p.name || '').toLowerCase().includes(pubPickerQ.trim().toLowerCase())))}
-                keyExtractor={p=>String(p.id)}
+                <FlatList
+                  keyExtractor={(item, index) => String(item.id ?? item.name ?? `${item.latitude}_${item.longitude}_${index}`)}
+                  data={pubPickerMode === 'pubs'
+                    ? pubs.filter(p => isValidCoord(p.latitude) && isValidCoord(p.longitude) && (pubPickerQ.trim().length < 2 || String(p.name || '').toLowerCase().includes(pubPickerQ.trim().toLowerCase())))
+                    : pubPickerStops.filter(s => isValidCoord(s.latitude) && isValidCoord(s.longitude) && (pubPickerQ.trim().length < 2 || String(s.name || '').toLowerCase().includes(pubPickerQ.trim().toLowerCase())))
+                  }
+                
                 keyboardShouldPersistTaps="handled"
-                renderItem={({item})=>(
-                  <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
-                    onPress={()=>{
-                      setWp(pubPicker, {
-                        label: String(item.name || 'Vybraná hospůdka'),
-                        lat: Number(item.latitude),
-                        lng: Number(item.longitude),
-                      });
-                      setPubPicker(null);
-                      setPubPickerQ('');
-                    }}>
-                    <Ionicons name={visited.has?.(item.id)?'checkmark-circle':'beer-outline'} size={18} color={visited.has?.(item.id)?C.green:C.amber} style={{marginRight:8}}/>
-                    <View style={{flex:1}}>
-                      <Text style={{color:C.cream,fontWeight:'700'}}>{item.name || 'Bez názvu'}</Text>
-                      <Text style={s.dimText}>{[item.type,item.city].filter(Boolean).join(' · ')}</Text>
-                    </View>
-                  </TouchableOpacity>
-                )}
+                  renderItem={({item})=>{
+                    if (pubPickerMode === 'pubs') {
+                      return (
+                        <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
+                          onPress={()=>{
+                            setWp(pubPicker, {
+                              label: String(item.name || 'Vybraná hospůdka'),
+                              lat: Number(item.latitude),
+                              lng: Number(item.longitude),
+                            });
+                            setPubPicker(null);
+                            setPubPickerQ('');
+                          }}>
+                          <Ionicons name={visited.has?.(item.id)?'checkmark-circle':'beer-outline'} size={18} color={visited.has?.(item.id)?C.green:C.amber} style={{marginRight:8}}/>
+                          <View style={{flex:1}}>
+                            <Text style={{color:C.cream,fontWeight:'700'}}>{item.name || 'Bez názvu'}</Text>
+                            <Text style={s.dimText}>{[item.type,item.city].filter(Boolean).join(' · ')}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }
+                    // stops
+                    return (
+                      <TouchableOpacity style={[s.lbRow,{marginBottom:6}]}
+                        onPress={()=>{
+                          setWp(pubPicker, {
+                            label: String(item.name || (item.stop_type || 'Zastávka')),
+                            lat: Number(item.latitude),
+                            lng: Number(item.longitude),
+                          });
+                          setPubPicker(null);
+                          setPubPickerQ('');
+                        }}>
+                        <Ionicons name="train-outline" size={18} color={C.purple} style={{marginRight:8}}/>
+                        <View style={{flex:1}}>
+                          <Text style={{color:C.cream,fontWeight:'700'}}>{item.name || (item.stop_type || 'Zastávka')}</Text>
+                          <Text style={s.dimText}>{item.stop_type ? item.stop_type : ''}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
                 contentContainerStyle={{padding:8,paddingBottom:20}}
                 ListEmptyComponent={<Text style={{color:C.creamDim,textAlign:'center',padding:20}}>Žádný podnik nenalezen.</Text>}
               />
@@ -2083,6 +2166,7 @@ const MapScreen = ({ user }) => {
     <View style={{flex:1}}>
       <MapboxMapView
         style={{flex:1}}
+        key={mapStyleId}
         styleURL={activeMapStyleUrl}
         preferredFramesPerSecond={60}
         compassEnabled
@@ -3015,23 +3099,65 @@ const LeaderboardTab = ({ user }) => {
   );
 };
 
-// Chat sub-tab
+// Chat sub-tab (socket-based, reactions, reply, read receipts)
+const io = require('socket.io-client');
 const ChatTab = ({ user }) => {
   const [msgs, setMsgs]       = useState([]);
   const [text, setText]       = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [userModal, setUserModal] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
+  const [reactModalFor, setReactModalFor] = useState(null);
   const listRef = useRef(null);
+  const socketRef = useRef(null);
 
-  useEffect(()=>{ loadMsgs(); const t=setInterval(loadMsgs,10000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{
+    let mounted = true;
+    const init = async()=>{
+      await loadMsgs();
+      // connect socket
+      try{
+        const token = await AsyncStorage.getItem('token');
+        const base = API.replace('/api','');
+        socketRef.current = io(base, { transports:['websocket'], auth: { token } });
+        socketRef.current.on('connect', ()=>console.log('socket connected'));
+        socketRef.current.on('disconnect', ()=>console.log('socket disconnected'));
+        socketRef.current.on('chat:new', (m)=>{
+          setMsgs(prev=>{
+            const exists = prev.find(p=>p.id===m.id);
+            if(exists) return prev;
+            const merged = [...prev, m].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+            return merged;
+          });
+          // auto-scroll when new message arrives
+          setTimeout(()=>listRef.current?.scrollToEnd({animated:true}), 80);
+        });
+        socketRef.current.on('chat:react', (d)=>{
+          setMsgs(prev=>prev.map(m=>m.id===d.id?{...m, reactions: JSON.stringify(d.raw)}:m));
+        });
+        socketRef.current.on('chat:delete', (d)=>{
+          setMsgs(prev=>prev.filter(m=>m.id!==d.id));
+        });
+        socketRef.current.on('chat:read', (d)=>{
+          // optional: mark read status locally
+        });
+      }catch(e){console.warn('Socket init failed',e)}
+    };
+    init();
+    return ()=>{ mounted=false; try{ socketRef.current?.disconnect(); }catch(e){} };
+  },[]);
 
   const loadMsgs = async()=>{
     try{
-      const d=await apiFetch('/community/chat?limit=50');
-      // API vrací zprávy od nejnovější – obrátíme na chronologické pořadí (nejstarší nahoře)
+      const d=await apiFetch('/community/chat?limit=200');
       const sorted = Array.isArray(d) ? [...d].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)) : [];
       setMsgs(sorted);
+      // send read receipt for the latest message
+      if(sorted.length){
+        const last = sorted[sorted.length-1];
+        try{ await apiFetch('/community/chat/read',{method:'POST',body:JSON.stringify({message_id:last.id})}); }catch(e){}
+      }
     }
     catch{}
     setLoading(false);
@@ -3041,12 +3167,21 @@ const ChatTab = ({ user }) => {
     const t=text.trim(); if(!t)return;
     setSending(true); setText('');
     try{
-      await apiFetch('/community/chat',{method:'POST',body:JSON.stringify({message:t})});
-      await loadMsgs();
-      // scroll to bottom after sending
-      setTimeout(()=>listRef.current?.scrollToEnd({animated:true}), 100);
-    }catch(e){Alert.alert('Chyba',e.message);}
-    finally{setSending(false);}
+      await apiFetch('/community/chat',{method:'POST',body:JSON.stringify({message:t, reply_to_id: replyTo})});
+      setReplyTo(null);
+      // server will emit and we'll receive via socket
+      setTimeout(()=>listRef.current?.scrollToEnd({animated:true}), 200);
+    }catch(e){Alert.alert('Chyba',e.message);}    
+    finally{setSending(false);} 
+  };
+
+  const openReactModal = (msg) => setReactModalFor(msg);
+  const sendReaction = async(emoji) => {
+    if(!reactModalFor) return;
+    try{
+      await apiFetch(`/community/chat/${reactModalFor.id}/react`, {method:'POST', body: JSON.stringify({emoji})});
+      setReactModalFor(null);
+    }catch(e){Alert.alert('Chyba',e.message)}
   };
 
   const renderItem=({item})=>{
@@ -3067,9 +3202,26 @@ const ChatTab = ({ user }) => {
               <Text style={[s.dimText,{fontSize:11,marginBottom:2,textDecorationLine:'underline'}]}>{item.username}</Text>
             </TouchableOpacity>
           )}
-          <View style={[s.msgBubble,isMe&&s.msgBubbleMe]}>
-            <Text style={[s.msgText,isMe&&{color:C.bg}]}>{item.message}</Text>
-          </View>
+          <TouchableOpacity onLongPress={()=>openReactModal(item)} activeOpacity={0.8}>
+            <View style={[s.msgBubble,isMe&&s.msgBubbleMe]}>
+              {item.reply_message && (
+                <View style={{borderLeftWidth:3,borderLeftColor:'#ffffff22',paddingLeft:8,marginBottom:6}}>
+                  <Text style={[s.dimText,{fontSize:11}]}>{item.reply_username}: {item.reply_message}</Text>
+                </View>
+              )}
+              <Text style={[s.msgText,isMe&&{color:C.bg}]}>{item.message}</Text>
+              {/* reactions */}
+              {item.reactions && Object.keys(JSON.parse(item.reactions || '{}')).length>0 && (
+                <View style={{flexDirection:'row',marginTop:6}}>
+                  {Object.entries((()=>{const r=JSON.parse(item.reactions||'{}'); const s={}; Object.values(r).forEach(v=>s[v]=(s[v]||0)+1); return s;})()).map(([e,c])=> (
+                    <View key={e} style={{backgroundColor:'#00000040',paddingHorizontal:8,paddingVertical:4,borderRadius:16,marginRight:6}}>
+                      <Text style={{color:C.cream,fontSize:12}}>{e} {c}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
           <Text style={[s.dimText,{fontSize:10,marginTop:2,textAlign:isMe?'right':'left'}]}>
             {new Date(item.created_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'})}
           </Text>
@@ -3094,14 +3246,37 @@ const ChatTab = ({ user }) => {
         ))}
       </ScrollView>
       <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'}>
+        {replyTo && (
+          <View style={{padding:8,backgroundColor:'#00000022',flexDirection:'row',alignItems:'center'}}>
+            <Text style={{color:C.creamDim,flex:1}}>Odpověď: {replyTo.username}: {replyTo.message.slice(0,80)}</Text>
+            <TouchableOpacity onPress={()=>setReplyTo(null)}><Ionicons name="close" size={18} color={C.creamDim}/></TouchableOpacity>
+          </View>
+        )}
         <View style={s.chatInput}>
           <TextInput style={[s.input,{flex:1,marginBottom:0}]} placeholder="Zpráva…" placeholderTextColor={C.creamDim}
             value={text} onChangeText={setText} onSubmitEditing={send} returnKeyType="send"/>
           <TouchableOpacity style={[s.btnPri,{paddingHorizontal:16,paddingVertical:12}]} onPress={send} disabled={sending}>
-            {sending?<ActivityIndicator color={C.bg} size="small"/>:<Ionicons name="send" size={18} color={C.bg}/>}
+            {sending?<ActivityIndicator color={C.bg} size="small"/>:<Ionicons name="send" size={18} color={C.bg}/>} 
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Reaction modal */}
+      <Modal visible={!!reactModalFor} transparent animationType="fade">
+        <TouchableOpacity style={{flex:1,backgroundColor:'#00000066',justifyContent:'center',alignItems:'center'}} activeOpacity={1} onPress={()=>setReactModalFor(null)}>
+          <View style={{backgroundColor:C.bgCard,padding:12,borderRadius:12,flexDirection:'row'}}>
+            {[ '👍','❤️','😂','😮','😢','🎉' ].map(e=> (
+              <TouchableOpacity key={e} onPress={()=>sendReaction(e)} style={{padding:8,margin:6}}>
+                <Text style={{fontSize:24}}>{e}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={()=>{ setReplyTo(reactModalFor); setReactModalFor(null); }} style={{padding:8,margin:6,justifyContent:'center'}}>
+              <Text style={{color:C.cream}}>Odpovědět</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {userModal&&<UserProfileModal username={userModal} selfId={user.id} onClose={()=>setUserModal(null)}/>} 
     </View>
   );
