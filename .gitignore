@@ -8,3 +8,4 @@ dist/
 ./backend
 backend/
 mapstyle.json
+.DS_Store
