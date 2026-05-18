@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.8 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.9 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -31,7 +31,7 @@ const MAPBOX_STYLE_OPTIONS = [
   { id: 'hospudkobrani', label: 'Hospůdkobranická mapa', url: MAPBOX_STYLE_URL },
   { id: 'basic', label: 'Základní mapa', url: 'mapbox://styles/mapbox/streets-v11' },
 ];
-const INITIAL_MAP_CENTER = [13.3736, 49.7384];
+const INITIAL_MAP_CENTER = [49.7464725, 13.3648025];
 const PUBS_SOURCE_ID = 'pubs-source';
 const SELECTED_PUB_SOURCE_ID = 'selected-pub-source';
 const TRANSPORT_SOURCE_ID = 'transport-source';
@@ -276,25 +276,6 @@ async function setupPushNotifications(userId) {
   }
 }
 
-// Handle incoming notifications
-Notifications.addNotificationReceivedListener(notification => {
-  console.log('Notifikace přijata:', notification);
-});
-
-// Handle notification response (tap)
-Notifications.addNotificationResponseReceivedListener(response => {
-  console.log('Notifikace tap:', response);
-  const data = response.notification.request.content.data;
-  if (data.type === 'like') {
-    // Open gallery or specific photo
-  } else if (data.type === 'follow') {
-    // Open Community tab
-  } else if (data.type === 'chat_reply') {
-    // Open chat
-  } else if (data.type === 'visit') {
-    // Open map with pub
-  }
-});
 
 
 async function scheduleLocalNotification(title, body) {
@@ -464,10 +445,13 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
   const [cur, setCur] = useState(startIndex);
   const [likedState, setLikedState] = useState(photos.map(p => p.liked || false));
   const [likeCounts, setLikeCounts] = useState(photos.map(p => p.like_count || 0));
+  const [imgError, setImgError] = useState(false);
   const [userModal, setUserModal] = useState(null);
   const fa = useRef(new Animated.Value(0)).current;
   const currentPhoto = photos[cur];
   const currentPhotoLikeId = getPhotoLikeId(currentPhoto);
+
+  useEffect(() => { setImgError(false); }, [cur]);
 
   useEffect(()=>{ Animated.timing(fa,{toValue:1,duration:200,useNativeDriver:true}).start(); },[]);
   const close = ()=>{ Animated.timing(fa,{toValue:0,duration:150,useNativeDriver:true}).start(onClose); };
@@ -489,10 +473,19 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
     }
   };
 
+  if (!currentPhoto) return null;
+
   return (
     <Modal visible animationType="none" transparent statusBarTranslucent>
       <Animated.View style={[s.pvBg,{opacity:fa}]}>
-        <Image source={{uri:photos[cur].url}} style={s.pvImg} resizeMode="contain" />
+        {imgError ? (
+          <View style={[s.pvImg,{alignItems:'center',justifyContent:'center'}]}>
+            <Ionicons name="image-outline" size={56} color={C.creamDim}/>
+            <Text style={{color:C.creamDim,marginTop:8,fontSize:13}}>Fotka se nepodařila načíst</Text>
+          </View>
+        ) : (
+          <Image source={{uri:currentPhoto.url}} style={s.pvImg} resizeMode="contain" onError={()=>setImgError(true)} />
+        )}
         <View style={s.pvFooter}>
           <TouchableOpacity onPress={() => setUserModal(photos[cur].username)}>
             <Text style={s.pvAuthor}>{photos[cur].username}</Text>
@@ -1546,7 +1539,7 @@ const ReportPubModal = ({ pub, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // ROUTING MODAL (GraphHopper)
 // ══════════════════════════════════════════════════════════════════════════════
-const RoutingModal = ({ pubs, userLoc, onRouteReady, onClose }) => {
+const RoutingModal = ({ pubs, visited = new Set(), userLoc, onRouteReady, onClose }) => {
   const [waypoints, setWaypoints] = useState([
     userLoc ? { label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude } : null,
     null
@@ -2057,7 +2050,8 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   },[loc]);
 
   useEffect(() => {
-    if (!cameraRef.current || hasCenteredRef.current) return;
+    if (!cameraRef.current || !savedViewportRef.current) return;
+    savedViewportRef.current = false;
     hasCenteredRef.current = true;
     cameraRef.current.setCamera({
       centerCoordinate: viewport.center,
@@ -2627,7 +2621,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
         </View>
       )}
 
-      {routingMod&&<RoutingModal pubs={pubs} userLoc={loc}
+      {routingMod&&<RoutingModal pubs={pubs} visited={visited} userLoc={loc}
         onRouteReady={(result)=>{
           if (!result) { setRouteShape(null); return; }
           setRouteShape({ type:'Feature', geometry:{ type:'LineString', coordinates:result.coords } });
@@ -3491,20 +3485,33 @@ const GalleryTab = ({ user }) => {
           onRefresh={()=>{setRefr(true);setPage(1);load(1,true);}}/>}
         onEndReached={loadMore} onEndReachedThreshold={0.4}
         renderItem={({item,index})=>(
-          <View style={{position:'relative',marginBottom:4}}>
-            <TouchableOpacity onPress={()=>setPv(index)} activeOpacity={0.85}>
-              <Image source={{uri:item.url}} style={{width:SIZE,height:SIZE,borderRadius:6}} resizeMode="cover"/>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.photoLikeBtn} onPress={()=>likePhoto(item.id)}>
-              <Ionicons name={item.liked?'heart':'heart-outline'} size={14} color={item.liked?C.red:C.white}/>
-              {(item.like_count||0)>0 && <Text style={s.photoLikeT}>{item.like_count}</Text>}
-            </TouchableOpacity>
-          </View>
+          <GalleryThumb item={item} size={SIZE} onPress={()=>setPv(index)} onLike={likePhoto} />
         )}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="images-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádné fotky</Text></View>}
       />
       {pv!==null&&<PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)} userId={user.id} onLikeUpdate={handleLikeUpdate} />}
     </View>
+  );
+};
+
+const GalleryThumb = ({ item, size, onPress, onLike }) => {
+  const [err, setErr] = useState(false);
+  return (
+          <View style={{position:'relative',marginBottom:4}}>
+            <TouchableOpacity onPress={onPress} activeOpacity={0.85}>
+              {err ? (
+                <View style={{width:size,height:size,borderRadius:6,backgroundColor:C.bgCardAlt,alignItems:'center',justifyContent:'center'}}>
+                  <Ionicons name="image-outline" size={24} color={C.border}/>
+                </View>
+              ) : (
+                <Image source={{uri:item.url}} style={{width:size,height:size,borderRadius:6}} resizeMode="cover" onError={()=>setErr(true)}/>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.photoLikeBtn} onPress={()=>onLike?.(item.id)}>
+              <Ionicons name={item.liked?'heart':'heart-outline'} size={14} color={item.liked?C.red:C.white}/>
+              {(item.like_count||0)>0 && <Text style={s.photoLikeT}>{item.like_count}</Text>}
+            </TouchableOpacity>
+          </View>
   );
 };
 
@@ -4042,7 +4049,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.8 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.9 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <Modal visible={gdprModalVisible} animationType="slide" transparent statusBarTranslucent>
         <View style={{flex:1,backgroundColor:C.bg}}>
@@ -4191,6 +4198,26 @@ export default function App() {
     const sub = Linking.addEventListener ? Linking.addEventListener('url', onUrl) : Linking.addListener('url', onUrl);
     return ()=>{ try{sub.remove?.();}catch(e){} };
   },[]);
+
+  useEffect(() => {
+    const sub1 = Notifications.addNotificationReceivedListener(notification => {
+      console.log('Notifikace přijata:', notification);
+    });
+    const sub2 = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log('Notifikace tap:', response);
+      const data = response.notification.request.content.data;
+      if (data.type === 'like') {
+        // Open gallery or specific photo
+      } else if (data.type === 'follow') {
+        // Open Community tab
+      } else if (data.type === 'chat_reply') {
+        // Open chat
+      } else if (data.type === 'visit') {
+        // Open map with pub
+      }
+    });
+    return () => { sub1.remove(); sub2.remove(); };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
