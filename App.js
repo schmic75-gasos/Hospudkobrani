@@ -202,9 +202,31 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const trackEvent = (event, props = {}) => {
-  apiFetch('/telemetry', { method:'POST', body:JSON.stringify({ event, props, ts:new Date().toISOString() }) }).catch(()=>{});
+const APP_VERSION = '1.4.10';
+
+const _telemetryContext = () => {
+  const { width, height } = Dimensions.get('window');
+  return {
+    app_version: APP_VERSION,
+    platform:    Platform.OS,
+    os_version:  Platform.Version,
+    device:      Device.modelName  || undefined,
+    brand:       Device.brand      || undefined,
+    screen_w:    width,
+    screen_h:    height,
+    orientation: width > height ? 'landscape' : 'portrait',
+  };
 };
+
+const trackEvent = (event, props = {}) => {
+  apiFetch('/telemetry', {
+    method: 'POST',
+    body: JSON.stringify({ event, props: { ..._telemetryContext(), ...props }, ts: new Date().toISOString() }),
+  }).catch(() => {});
+};
+
+const trackError = (message, context = {}) =>
+  trackEvent('error', { message: String(message).slice(0, 300), ...context });
 
 // ─── SYNCHRONIZACE FRONTY NÁVŠTĚV ─────────────────────────────────────────────
 const syncVisitsQueue = async (userId) => {
