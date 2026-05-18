@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.9 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.10 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -20,6 +20,7 @@ import * as TaskManager from 'expo-task-manager';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
+import * as FileSystem from 'expo-file-system';
 
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -31,7 +32,7 @@ const MAPBOX_STYLE_OPTIONS = [
   { id: 'hospudkobrani', label: 'Hospůdkobranická mapa', url: MAPBOX_STYLE_URL },
   { id: 'basic', label: 'Základní mapa', url: 'mapbox://styles/mapbox/streets-v11' },
 ];
-const INITIAL_MAP_CENTER = [49.7464725, 13.3648025];
+const INITIAL_MAP_CENTER = [13.3648025, 49.7464725]; // [lng, lat] – Plzeň
 const PUBS_SOURCE_ID = 'pubs-source';
 const SELECTED_PUB_SOURCE_ID = 'selected-pub-source';
 const TRANSPORT_SOURCE_ID = 'transport-source';
@@ -195,9 +196,48 @@ const saveOfflinePubs  = async d  => AsyncStorage.setItem('offline_pubs',JSON.st
 const saveOfflineAreas = async d  => AsyncStorage.setItem('offline_areas',JSON.stringify(d));
 
 // ─── OFFLINE ──────────────────────────────────────────────────────────────────
-const getQ   = async () => { const r=await AsyncStorage.getItem('oq'); return r?JSON.parse(r):[]; };
-const pushQ  = async i  => { const q=await getQ(); q.push({...i,at:new Date().toISOString()}); await AsyncStorage.setItem('oq',JSON.stringify(q)); };
-const clearQ = ()       => AsyncStorage.removeItem('oq');
+const getQ        = async () => { const r=await AsyncStorage.getItem('oq'); return r?JSON.parse(r):[]; };
+const pushQ       = async i  => { const q=await getQ(); q.push({...i,at:new Date().toISOString(),_qid:`${Date.now()}_${Math.random().toString(36).slice(2,8)}`}); await AsyncStorage.setItem('oq',JSON.stringify(q)); };
+const clearQ      = ()       => AsyncStorage.removeItem('oq');
+const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
+
+// ─── TELEMETRIE ────────────────────────────────────────────────────────────────
+const trackEvent = (event, props = {}) => {
+  apiFetch('/telemetry', { method:'POST', body:JSON.stringify({ event, props, ts:new Date().toISOString() }) }).catch(()=>{});
+};
+
+// ─── SYNCHRONIZACE FRONTY NÁVŠTĚV ─────────────────────────────────────────────
+const syncVisitsQueue = async (userId) => {
+  const q = await getQ();
+  if (!q.length) return 0;
+  const successIds = [];
+  for (const item of q) {
+    if (item.type !== 'visit') continue;
+    try {
+      const response = await apiFetch('/visits', { method:'POST', body:JSON.stringify(item.payload) });
+      for (const uri of (item.photos || [])) {
+        try {
+          const fd = new FormData();
+          fd.append('photo', { uri, name:'photo.jpg', type:'image/jpeg' });
+          fd.append('pub_id', String(item.payload.pub_id));
+          await fetch(`${API}/visits/photo`, { method:'POST', headers:{ Authorization:`Bearer ${await getToken()}` }, body:fd });
+        } catch {}
+      }
+      if (response.new_challenges?.length) {
+        for (const ch of response.new_challenges) {
+          await scheduleLocalNotification('Výzva splněna!', `Získáváš výzvu: ${ch}`);
+        }
+      }
+      if (item._qid) successIds.push(item._qid);
+    } catch {}
+  }
+  if (successIds.length) {
+    await removeQItems(successIds);
+    if (userId) { bust(`v_${userId}`); bust(`vd_${userId}`); }
+    trackEvent('sync_completed', { synced: successIds.length });
+  }
+  return successIds.length;
+};
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const hav = (a,b,c,d) => {
@@ -298,6 +338,7 @@ const getBackgroundTaskModule = () => {
 
 TaskManager.defineTask(DATASET_CHECK_TASK, async () => {
   try {
+    await syncVisitsQueue().catch(()=>{});
     const offlineAreas = await getOfflineAreas();
     for (const code of offlineAreas) {
       const lastVersion = await AsyncStorage.getItem(`version_${code}`);
@@ -1539,20 +1580,26 @@ const ReportPubModal = ({ pub, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // ROUTING MODAL (GraphHopper)
 // ══════════════════════════════════════════════════════════════════════════════
-const RoutingModal = ({ pubs, visited = new Set(), userLoc, onRouteReady, onClose }) => {
-  const [waypoints, setWaypoints] = useState([
-    userLoc ? { label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude } : null,
-    null
-  ]);
+const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteReady, onClose }) => {
+  const [waypoints, setWaypoints] = useState([null, null]);
   const [profile, setProfile]   = useState('walk');
   const [avoidMotorway, setAvoidMotorway] = useState(false);
   const [calculating, setCalc]  = useState(false);
   const [routeInfo, setRouteInfo] = useState(null);
-  const [pubPicker, setPubPicker] = useState(null); // index of waypoint being set from pub
-  const [pubPickerQ, setPubPickerQ] = useState(''); // search query in pub picker
-  const [pubPickerMode, setPubPickerMode] = useState('pubs'); // 'pubs' or 'stops'
+  const [pubPicker, setPubPicker] = useState(null);
+  const [pubPickerQ, setPubPickerQ] = useState('');
+  const [pubPickerMode, setPubPickerMode] = useState('pubs');
   const [pubPickerStops, setPubPickerStops] = useState([]);
   const [loadingStops, setLoadingStops] = useState(false);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!visible || initializedRef.current) return;
+    if (userLoc) {
+      setWaypoints([{ label:'Moje poloha', lat:userLoc.latitude, lng:userLoc.longitude }, null]);
+      initializedRef.current = true;
+    }
+  }, [visible, userLoc]);
   useEffect(() => {
     let mounted = true;
     const loadStops = async () => {
@@ -1617,10 +1664,27 @@ const RoutingModal = ({ pubs, visited = new Set(), userLoc, onRouteReady, onClos
 
   const clearRoute = () => { setRouteInfo(null); onRouteReady(null); };
 
+  const exportGPX = async () => {
+    if (!routeInfo?.coords?.length) return;
+    const trkpts = routeInfo.coords.map(([lng, lat]) =>
+      `      <trkpt lat="${lat}" lon="${lng}"></trkpt>`
+    ).join('\n');
+    const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Hospůdkobraní" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>Trasa Hospůdkobraní</name><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
+    try {
+      const uri = `${FileSystem.cacheDirectory}trasa_${Date.now()}.gpx`;
+      await FileSystem.writeAsStringAsync(uri, gpxContent, { encoding: FileSystem.EncodingType.UTF8 });
+      try {
+        const Sharing = require('expo-sharing');
+        if (await Sharing.isAvailableAsync()) { await Sharing.shareAsync(uri, { mimeType:'application/gpx+xml', dialogTitle:'Exportovat GPX' }); return; }
+      } catch {}
+      await Share.share({ message: gpxContent, title:'trasa.gpx' });
+    } catch { Alert.alert('Chyba','GPX se nepodařilo exportovat.'); }
+  };
+
   const GH_PROFILES = TRANSPORT_MODES;
 
   return (
-    <Modal visible animationType="slide" transparent>
+    <Modal visible={visible} animationType="slide" transparent>
       <View style={s.modalOverlay}>
         <View style={[s.modalCard,{maxHeight:SH*0.82}]}>
           <View style={s.modalHeader}>
@@ -1710,13 +1774,19 @@ const RoutingModal = ({ pubs, visited = new Set(), userLoc, onRouteReady, onClos
               </View>
             )}
 
-            <View style={{flexDirection:'row',gap:8}}>
+            <View style={{flexDirection:'row',gap:8,flexWrap:'wrap'}}>
               {routeInfo && (
-                <TouchableOpacity style={[s.btnSec,{flex:1,justifyContent:'center'}]} onPress={clearRoute}>
-                  <Text style={{color:C.creamDim,textAlign:'center',fontWeight:'600'}}>Smazat trasu</Text>
+                <TouchableOpacity style={[s.btnSec,{flex:1,justifyContent:'center',minWidth:90}]} onPress={clearRoute}>
+                  <Text style={{color:C.creamDim,textAlign:'center',fontWeight:'600'}}>Smazat</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={[s.btnPri,{flex:1}]} onPress={calculate} disabled={calculating}>
+              {routeInfo && (
+                <TouchableOpacity style={[s.btnSec,{flex:1,justifyContent:'center',minWidth:90,borderColor:C.teal}]} onPress={exportGPX}>
+                  <Ionicons name="download-outline" size={15} color={C.teal} style={{marginRight:4}}/>
+                  <Text style={{color:C.teal,textAlign:'center',fontWeight:'600'}}>GPX</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={[s.btnPri,{flex:2,minWidth:110}]} onPress={calculate} disabled={calculating}>
                 {calculating
                   ? <ActivityIndicator color={C.bg}/>
                   : <><Ionicons name="navigate-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Naplánovat</Text></>
@@ -2621,7 +2691,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
         </View>
       )}
 
-      {routingMod&&<RoutingModal pubs={pubs} visited={visited} userLoc={loc}
+      <RoutingModal visible={routingMod} pubs={pubs} visited={visited} userLoc={loc}
         onRouteReady={(result)=>{
           if (!result) { setRouteShape(null); return; }
           setRouteShape({ type:'Feature', geometry:{ type:'LineString', coordinates:result.coords } });
@@ -2635,7 +2705,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
             );
           }
         }}
-        onClose={()=>setRoutingMod(false)}/>}
+        onClose={()=>setRoutingMod(false)}/>
     </View>
   );
 };
@@ -2655,11 +2725,8 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
   const [transport, setTransport] = useState('walk');
   const [loading, setLoading]   = useState(true);
   const [busy, setBusy]         = useState(false);
-  const [online, setOnline]     = useState(true);
-
   useEffect(()=>{
     apiFetch(`/pubs/${pub.id}/question`).then(setQ).catch(()=>setQ(null)).finally(()=>setLoading(false));
-    NetInfo.fetch().then(s=>setOnline(s.isConnected));
   },[]);
 
   const pickPhoto = async()=>{
@@ -2675,28 +2742,10 @@ const LogModal = ({ pub, user, onClose, onSuccess }) => {
     setBusy(true);
     const payload={pub_id:pub.id,answer_id:ans,rating,note,note_visibility:noteViz,photo_visibility:photosViz,travel_mode:transport,logged_at:new Date().toISOString()};
     try{
-      let response;
-      if(online){
-        response = await apiFetch('/visits',{method:'POST',body:JSON.stringify(payload)});
-        for(const uri of photos){
-          const fd=new FormData();
-          fd.append('photo',{uri,name:'photo.jpg',type:'image/jpeg'});
-          fd.append('pub_id',String(pub.id));
-          await fetch(`${API}/visits/photo`,{method:'POST',headers:{Authorization:`Bearer ${await getToken()}`},body:fd});
-        }
-      }else{
-        await pushQ({type:'visit',payload,photos});
-        Alert.alert('Offline','Odkliknutí uloženo lokálně.');
-        onSuccess();
-        return;
-      }
-      // Notifikace o nově splněných výzvách
-      if (response.new_challenges && response.new_challenges.length) {
-        for (const ch of response.new_challenges) {
-          await scheduleLocalNotification('Výzva splněna!', `Získáváš výzvu: ${ch}`);
-        }
-      }
+      await pushQ({type:'visit',payload,photos});
+      trackEvent('visit_logged',{pub_id:pub.id,rating});
       onSuccess();
+      NetInfo.fetch().then(net=>{ if(net.isConnected) syncVisitsQueue(user.id).catch(()=>{}); }).catch(()=>{});
     }catch(e){Alert.alert('Chyba',e.message);}
     finally{setBusy(false);}
   };
@@ -2954,8 +3003,21 @@ const VisitsScreen = ({ user }) => {
   const [sort, setSort]         = useState('date');
   const [detailPub, setDetail]  = useState(null);
   const [detailLoad, setDL]     = useState(false);
+  const [offQ, setOffQ]         = useState(0);
+  const [syncing, setSyncing]   = useState(false);
 
-  useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ load(); checkOff(); },[]);
+
+  const checkOff = async()=>{ const q=await getQ(); setOffQ(q.filter(i=>i.type==='visit').length); };
+
+  const syncOff = async()=>{
+    setSyncing(true);
+    const n=await syncVisitsQueue(user.id).catch(()=>0);
+    await checkOff();
+    if(n>0){ Alert.alert('Hotovo ✓',`Synchronizováno ${n} odkliknutí!`); load(true); }
+    else Alert.alert('Sync','Nic k synchronizaci.');
+    setSyncing(false);
+  };
 
   const load = async(force=false)=>{
     if(force) bust(`vd_${user.id}`);
@@ -3017,6 +3079,17 @@ const VisitsScreen = ({ user }) => {
         <Text style={s.pageTitle}>Moje hospůdky</Text>
         <Text style={s.pageSub}>{visits.length} navštívených</Text>
       </View>
+      {offQ>0&&(
+        <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginHorizontal:16,marginBottom:8,padding:12,borderRadius:14,backgroundColor:C.bgCardAlt,borderWidth:1,borderColor:C.amber}}>
+          <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
+            <Ionicons name="cloud-upload-outline" size={18} color={C.amber}/>
+            <Text style={{color:C.amber,fontWeight:'700',fontSize:13}}>{offQ} odkliknutí čeká na sync</Text>
+          </View>
+          <TouchableOpacity style={{paddingHorizontal:14,paddingVertical:7,borderRadius:10,backgroundColor:C.amber,opacity:syncing?0.6:1}} onPress={syncOff} disabled={syncing}>
+            {syncing?<ActivityIndicator color={C.bg} size="small"/>:<Text style={{color:C.bg,fontWeight:'800',fontSize:13}}>Sync</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
       <View style={s.sortBar}>
         {[['date','Datum'],['rating','Hodnocení'],['name','Název']].map(([k,l])=>(
           <TouchableOpacity key={k} style={[s.sortBtn,sort===k&&s.sortBtnOn]} onPress={()=>setSort(k)}>
@@ -3764,9 +3837,10 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
   const checkOff = async()=>{ const q=await getQ(); setOffQ(q.length); };
 
   const syncOff = async()=>{
-    setSyncing(true); const q=await getQ(); let n=0;
-    for(const i of q){ try{ if(i.type==='visit'){await apiFetch('/visits',{method:'POST',body:JSON.stringify(i.payload)});n++;} }catch{} }
-    if(n>0){ await clearQ(); setOffQ(0); bust(`v_${user.id}`); bust(`vd_${user.id}`); Alert.alert('Sync','Synchronizováno '+n+' odkliknutí!'); }
+    setSyncing(true);
+    const n=await syncVisitsQueue(user.id).catch(()=>0);
+    const q=await getQ(); setOffQ(q.filter(i=>i.type==='visit').length);
+    if(n>0){ Alert.alert('Hotovo ✓','Synchronizováno '+n+' odkliknutí!'); }
     else Alert.alert('Sync','Nic k synchronizaci.');
     setSyncing(false);
   };
@@ -4049,7 +4123,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.9 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.10 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <Modal visible={gdprModalVisible} animationType="slide" transparent statusBarTranslucent>
         <View style={{flex:1,backgroundColor:C.bg}}>
@@ -4198,6 +4272,15 @@ export default function App() {
     const sub = Linking.addEventListener ? Linking.addEventListener('url', onUrl) : Linking.addListener('url', onUrl);
     return ()=>{ try{sub.remove?.();}catch(e){} };
   },[]);
+
+  useEffect(() => {
+    if (!user) return;
+    trackEvent('app_open', { user_id: user.id });
+    const unsub = NetInfo.addEventListener(state => {
+      if (state.isConnected) syncVisitsQueue(user.id).catch(()=>{});
+    });
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     const sub1 = Notifications.addNotificationReceivedListener(notification => {
