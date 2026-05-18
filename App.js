@@ -1,11 +1,11 @@
 /**
- * Hospůdkobraní – App.js v1.4.7 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.8 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, TouchableWithoutFeedback, ScrollView, TextInput,
   Alert, Modal, Image, ActivityIndicator, FlatList, Dimensions,
   Platform, StatusBar, Animated, KeyboardAvoidingView, RefreshControl,
   Linking, Share,
@@ -29,7 +29,7 @@ const MAPBOX_TOKEN = 'pk.eyJ1IjoidGhpc2lrIiwiYSI6ImNtbndzZ2t2dzFmemcycXF1OXpidzd
 const MAPBOX_STYLE_URL = 'mapbox://styles/thisik/cmnwu4fxv003p01s731x1b5wx';
 const MAPBOX_STYLE_OPTIONS = [
   { id: 'hospudkobrani', label: 'Hospůdkobranická mapa', url: MAPBOX_STYLE_URL },
-  { id: 'basic', label: 'Základní mapa', url: 'mapbox://styles/thisik/cmoyl7ob5002h01sb8uh4fumf' },
+  { id: 'basic', label: 'Základní mapa', url: 'mapbox://styles/mapbox/streets-v11' },
 ];
 const INITIAL_MAP_CENTER = [13.3736, 49.7384];
 const PUBS_SOURCE_ID = 'pubs-source';
@@ -307,6 +307,14 @@ async function scheduleLocalNotification(title, body) {
 // ─── BACKGROUND TASK PRO VERZI DATASETU ───────────────────────────────────────
 const DATASET_CHECK_TASK = 'DATASET_CHECK';
 
+const getBackgroundTaskModule = () => {
+  try {
+    return require('expo-background-task');
+  } catch {
+    return null;
+  }
+};
+
 TaskManager.defineTask(DATASET_CHECK_TASK, async () => {
   try {
     const offlineAreas = await getOfflineAreas();
@@ -323,34 +331,27 @@ TaskManager.defineTask(DATASET_CHECK_TASK, async () => {
         );
       }
     }
-    try{
-      const BF = require('expo-background-fetch');
-      return BF?.Result?.NewData || 'NewData';
-    }catch(e){
-      return 'NewData';
-    }
+    const BT = getBackgroundTaskModule();
+    return BT?.Result?.NewData || 'NewData';
   } catch (e) {
-    try{
-      const BF = require('expo-background-fetch');
-      return BF?.Result?.Failed || 'Failed';
-    }catch(ex){
-      return 'Failed';
-    }
+    const BT = getBackgroundTaskModule();
+    return BT?.Result?.Failed || 'Failed';
   }
 });
 
 async function registerBackgroundFetch() {
   try{
-    const BF = require('expo-background-fetch');
-    const status = await BF.getStatusAsync();
-    if (status !== BF.Status.Available) return;
-    await BF.registerTaskAsync(DATASET_CHECK_TASK, {
+    const BT = getBackgroundTaskModule();
+    if (!BT) return;
+    const status = await BT.getStatusAsync();
+    if (status !== BT.Status.Available) return;
+    await BT.registerTaskAsync(DATASET_CHECK_TASK, {
       minimumInterval: 5 * 60, // 5 minut
       stopOnTerminate: false,
       startOnBoot: true,
     });
   }catch(e){
-    // expo-background-fetch není dostupné nebo je deprecated — přeskočíme registraci
+    // expo-background-task není dostupné nebo registrace selhala — přeskočíme
   }
 }
 
@@ -1824,6 +1825,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   const cameraRef       = useRef(null);
   const shapeSourceRef  = useRef(null);
   const hasCenteredRef  = useRef(false);
+  const savedViewportRef = useRef(false);
   const suggestModeRef  = useRef(false);
   const watchRef        = useRef(null);
 
@@ -1861,6 +1863,19 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   const activeMapStyleUrl = useMemo(() => {
     return MAPBOX_STYLE_OPTIONS.find(s => s.id === mapStyleId)?.url || MAPBOX_STYLE_URL;
   }, [mapStyleId]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('map_style_id');
+        if (stored && MAPBOX_STYLE_OPTIONS.some(s => s.id === stored)) {
+          setMapStyleId(stored);
+        }
+      } catch (e) {
+        console.warn('Unable to load map style', e);
+      }
+    })();
+  }, []);
 
   const fCount = useMemo(()=>{
     let n=0;
@@ -1919,13 +1934,16 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
       // Load map viewport setting and saved position
       const settings = await apiFetch('/profile/settings').catch(() => ({}));
       const rememberMap = settings.map_remember_position !== false;
+      let initialViewport = { center: INITIAL_MAP_CENTER, zoom: 9 };
       if (rememberMap) {
         const savedViewport = await AsyncStorage.getItem('map_viewport');
         if (savedViewport) {
           const vp = JSON.parse(savedViewport);
-          setViewport({ center: vp.center || INITIAL_MAP_CENTER, zoom: vp.zoom || 9 });
+          initialViewport = { center: vp.center || INITIAL_MAP_CENTER, zoom: vp.zoom || 9 };
+          savedViewportRef.current = true;
         }
       }
+      setViewport(initialViewport);
 
       const offPubs = await getOfflinePubs();
       const vd = await cached(`v_${user.id}`,()=>apiFetch('/visits/my'),TTL).catch(async()=>{
@@ -1941,7 +1959,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
       }
       setPubs(offPubs);
       setVisited(new Set(vd.map(v=>v.pub_id)));
-      updateAreaWarning(viewport.center[1], viewport.center[0]);
+      updateAreaWarning(initialViewport.center[1], initialViewport.center[0]);
     } catch(e){console.error(e);}
     finally{setLoading(false);}
   };
@@ -2025,7 +2043,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   const parkingShape = useMemo(() => toPoiFeatures(nearbyTransport?.parking || [], 'parking'), [nearbyTransport]);
 
   useEffect(()=>{
-    if(!loc||hasCenteredRef.current||!cameraRef.current)return;
+    if(!loc||hasCenteredRef.current||!cameraRef.current||savedViewportRef.current) return;
     hasCenteredRef.current = true;
     cameraRef.current.setCamera({
       centerCoordinate: [loc.longitude, loc.latitude],
@@ -2034,6 +2052,16 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
       animationMode: 'flyTo',
     });
   },[loc]);
+
+  useEffect(() => {
+    if (!cameraRef.current || hasCenteredRef.current) return;
+    hasCenteredRef.current = true;
+    cameraRef.current.setCamera({
+      centerCoordinate: viewport.center,
+      zoomLevel: viewport.zoom,
+      animationDuration: 0,
+    });
+  }, [viewport]);
 
   // Live odpočet vzdálenosti – aktualizuje se každou sekundu, ne jen při pohybu
   const locRef = useRef(null);
@@ -2376,8 +2404,9 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
                 <TouchableOpacity
                   key={option.id}
                   style={[s.ansBtn, mapStyleId === option.id && s.ansBtnOn]}
-                  onPress={() => {
+                  onPress={async () => {
                     setMapStyleId(option.id);
+                    try { await AsyncStorage.setItem('map_style_id', option.id); } catch (e) { console.warn('Unable to save map style', e); }
                     setStylePickerOpen(false);
                   }}
                 >
@@ -3139,6 +3168,7 @@ const ChatTab = ({ user }) => {
   const [userModal, setUserModal] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
   const [reactModalFor, setReactModalFor] = useState(null);
+  const [readStatus, setReadStatus] = useState({});
   const listRef = useRef(null);
   const socketRef = useRef(null);
 
@@ -3148,10 +3178,19 @@ const ChatTab = ({ user }) => {
       await loadMsgs();
       // connect socket
       try{
-        const token = await AsyncStorage.getItem('token');
+        const token = await getToken();
         const base = API.replace('/api','');
-        socketRef.current = io(base, { transports:['websocket'], auth: { token } });
+        socketRef.current = io(base, {
+          transports: ['polling','websocket'],
+          auth: { token },
+          query: { token },
+          path: '/socket.io',
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+        });
         socketRef.current.on('connect', ()=>console.log('socket connected'));
+        socketRef.current.on('connect_error', err=>console.warn('socket connect error', err));
         socketRef.current.on('disconnect', ()=>console.log('socket disconnected'));
         socketRef.current.on('chat:new', (m)=>{
           setMsgs(prev=>{
@@ -3160,7 +3199,6 @@ const ChatTab = ({ user }) => {
             const merged = [...prev, m].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
             return merged;
           });
-          // auto-scroll when new message arrives
           setTimeout(()=>listRef.current?.scrollToEnd({animated:true}), 80);
         });
         socketRef.current.on('chat:react', (d)=>{
@@ -3170,7 +3208,13 @@ const ChatTab = ({ user }) => {
           setMsgs(prev=>prev.filter(m=>m.id!==d.id));
         });
         socketRef.current.on('chat:read', (d)=>{
-          // optional: mark read status locally
+          setReadStatus(prev=>({
+            ...prev,
+            [d.message_id]: {
+              count: (prev[d.message_id]?.count || 0) + 1,
+              last_at: d.read_at,
+            }
+          }));
         });
       }catch(e){console.warn('Socket init failed',e)}
     };
@@ -3183,6 +3227,13 @@ const ChatTab = ({ user }) => {
       const d=await apiFetch('/community/chat?limit=200');
       const sorted = Array.isArray(d) ? [...d].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)) : [];
       setMsgs(sorted);
+      const initialReads = sorted.reduce((acc, item) => {
+        if (item.read_count > 0) {
+          acc[item.id] = { count: item.read_count, last_at: item.read_at };
+        }
+        return acc;
+      }, {});
+      setReadStatus(initialReads);
       // send read receipt for the latest message
       if(sorted.length){
         const last = sorted[sorted.length-1];
@@ -3213,9 +3264,18 @@ const ChatTab = ({ user }) => {
       setReactModalFor(null);
     }catch(e){Alert.alert('Chyba',e.message)}
   };
+  const deleteMessage = async () => {
+    if(!reactModalFor) return;
+    try{
+      await apiFetch(`/community/chat/${reactModalFor.id}`, { method:'DELETE' });
+      setMsgs(prev=>prev.filter(m=>m.id!==reactModalFor.id));
+      setReactModalFor(null);
+    }catch(e){Alert.alert('Chyba',e.message)}
+  };
 
   const renderItem=({item})=>{
     const isMe=item.user_id===user.id;
+    const readCount = readStatus[item.id]?.count || (item.read_count || 0);
     return(
       <View style={[s.msgRow,isMe&&{flexDirection:'row-reverse'}]}>
         {!isMe&&(
@@ -3252,9 +3312,14 @@ const ChatTab = ({ user }) => {
               )}
             </View>
           </TouchableOpacity>
-          <Text style={[s.dimText,{fontSize:10,marginTop:2,textAlign:isMe?'right':'left'}]}>
-            {new Date(item.created_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'})}
-          </Text>
+          <View style={{flexDirection:'row',justifyContent:isMe?'flex-end':'flex-start',alignItems:'center',gap:8}}>
+            <Text style={[s.dimText,{fontSize:10,marginTop:2,textAlign:isMe?'right':'left'}]}>
+              {new Date(item.created_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'})}
+            </Text>
+            {readCount > 0 && (
+              <Text style={[s.dimText,{fontSize:10,marginTop:2,color:C.amber}]}>Přečteno {readCount}</Text>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -3294,7 +3359,7 @@ const ChatTab = ({ user }) => {
       {/* Reaction modal */}
       <Modal visible={!!reactModalFor} transparent animationType="fade">
         <TouchableOpacity style={{flex:1,backgroundColor:'#00000066',justifyContent:'center',alignItems:'center'}} activeOpacity={1} onPress={()=>setReactModalFor(null)}>
-          <View style={{backgroundColor:C.bgCard,padding:12,borderRadius:12,flexDirection:'row'}}>
+          <View style={{backgroundColor:C.bgCard,padding:12,borderRadius:12,flexDirection:'row',flexWrap:'wrap',justifyContent:'center'}}>
             {[ '👍','❤️','😂','😮','😢','🎉' ].map(e=> (
               <TouchableOpacity key={e} onPress={()=>sendReaction(e)} style={{padding:8,margin:6}}>
                 <Text style={{fontSize:24}}>{e}</Text>
@@ -3303,6 +3368,11 @@ const ChatTab = ({ user }) => {
             <TouchableOpacity onPress={()=>{ setReplyTo(reactModalFor); setReactModalFor(null); }} style={{padding:8,margin:6,justifyContent:'center'}}>
               <Text style={{color:C.cream}}>Odpovědět</Text>
             </TouchableOpacity>
+            {reactModalFor?.user_id === user.id && (
+              <TouchableOpacity onPress={deleteMessage} style={{padding:8,margin:6,justifyContent:'center'}}>
+                <Text style={{color:C.red}}>Smazat</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </TouchableOpacity>
       </Modal>
@@ -3571,52 +3641,58 @@ const ActivityCalendar = () => {
         </View>
 
       )}
-    </View><Modal
+    </View>
+    <Modal
       visible={showDayModal}
       transparent
       animationType="slide"
       onRequestClose={() => setShowDayModal(false)}
     >
+      <TouchableWithoutFeedback onPress={() => setShowDayModal(false)}>
         <View style={{
           flex: 1,
           backgroundColor: 'rgba(0,0,0,0.6)',
           justifyContent: 'center',
           padding: 20
         }}>
-          <View style={{
-            backgroundColor: C.bgCard,
-            borderRadius: 16,
-            padding: 16
-          }}>
-            <Text style={{ color: C.cream, fontSize: 16, fontWeight: '700', marginBottom: 10 }}>
-              Návštěvy: {selectedDate}
-            </Text>
+          <TouchableWithoutFeedback onPress={() => {}}>
+            <View style={{
+              backgroundColor: C.bgCard,
+              borderRadius: 16,
+              padding: 16
+            }}>
+              <Text style={{ color: C.cream, fontSize: 16, fontWeight: '700', marginBottom: 10 }}>
+                Návštěvy: {selectedDate}
+              </Text>
 
-            {dayVisits.length === 0 ? (
-              <Text style={{ color: C.creamDim }}>Nic tady není… asi detox den 😄</Text>
-            ) : (
-              dayVisits.map((visit, i) => (
-                <Text key={i} style={{ color: C.cream, marginBottom: 6 }}>
-                  • {visit.pub_name || 'Neznámá hospoda'}
-                </Text>
-              ))
-            )}
+              {dayVisits.length === 0 ? (
+                <Text style={{ color: C.creamDim }}>Nic tady není… asi detox den 😄</Text>
+              ) : (
+                dayVisits.map((visit, i) => (
+                  <Text key={i} style={{ color: C.cream, marginBottom: 6 }}>
+                    • {visit.pub_name || 'Neznámá hospoda'}
+                  </Text>
+                ))
+              )}
 
-            <TouchableOpacity
-              onPress={() => setShowDayModal(false)}
-              style={{
-                marginTop: 12,
-                padding: 10,
-                backgroundColor: C.amber,
-                borderRadius: 10,
-                alignItems: 'center'
-              }}
-            >
-              <Text style={{ color: C.bg, fontWeight: '700' }}>Zavřít</Text>
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                onPress={() => setShowDayModal(false)}
+                style={{
+                  marginTop: 12,
+                  padding: 10,
+                  backgroundColor: C.amber,
+                  borderRadius: 10,
+                  alignItems: 'center'
+                }}
+              >
+                <Text style={{ color: C.bg, fontWeight: '700' }}>Zavřít</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
         </View>
-      </Modal></>
+      </TouchableWithoutFeedback>
+    </Modal>
+  </>
   
   );
   
@@ -3641,6 +3717,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
   const [delAccMod, setDelAccMod]     = useState(false);
   const [delPw, setDelPw]             = useState('');
   const [delLoading, setDelLoading]   = useState(false);
+  const [gdprModalVisible, setGdprModalVisible] = useState(false);
 
   useEffect(()=>{ loadAll(); checkOff(); const interval = setInterval(checkNewLikes, 60000); return () => clearInterval(interval); },[]);
   useEffect(()=>{ loadStats(); },[period]);
@@ -3961,12 +4038,29 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
 
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
-      <TouchableOpacity onPress={() => Alert.alert(
-        'GDPR & Copyright Info',
-        `GDPR INFORMACE:\n\nTato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\nShromažďované údaje:\n- Uživatelské jméno, email, heslo\n- Poloha zařízení pro mapové funkce\n- Fotografie a komentáře\n- Statistiky návštěv hospod\n\nÚdaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.\n\nPráva uživatele:\n- Právo na přístup k údajům\n- Právo na opravu\n- Právo na výmaz\n- Kontakt: noemiamisa@gmail.com\n\nCOPYRIGHTY:\n\n© Mapbox - Mapové dlaždice a data\n© GraphHopper - Směrovací služby\n© React Native & Expo - Framework\n© Michal Schneider - Kód aplikace, styl mapy apod.\n\nVšechna práva vyhrazena.`
-      )}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.7 (BETA) - GDPR & Copyright Info</Text>
+      <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.8 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
+      <Modal visible={gdprModalVisible} animationType="slide" transparent statusBarTranslucent>
+        <View style={{flex:1,backgroundColor:C.bg}}>
+          <View style={{paddingTop:Platform.OS==='android'?(StatusBar.currentHeight||24):44,flex:1}}>
+            <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:14,borderBottomWidth:1,borderColor:C.border}}>
+              <Text style={{color:C.cream,fontSize:18,fontWeight:'700'}}>GDPR & Copyright Info</Text>
+              <TouchableOpacity onPress={() => setGdprModalVisible(false)}>
+                <Ionicons name="close" size={24} color={C.creamDim}/>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={{padding:16,paddingBottom:28}}>
+              <Text style={{color:C.cream,lineHeight:22,marginBottom:12}}>
+                GDPR INFORMACE:{'\n'}{'\n'}Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).{'\n'}{'\n'}Shromažďované údaje:{'\n'}- Uživatelské jméno, email, heslo{'\n'}- Poloha zařízení pro mapové funkce{'\n'}- Fotografie a komentáře{'\n'}- Statistiky návštěv hospod{'\n'}{'\n'}Údaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.{'\n'}{'\n'}Práva uživatele:{'\n'}- Právo na přístup k údajům{'\n'}- Právo na opravu{'\n'}- Právo na výmaz{'\n'}- Kontakt: noemiamisa@gmail.com{'\n'}{'\n'}COPYRIGHTY:{'\n'}{'\n'}© Mapbox - Mapové dlaždice a data{'\n'}© GraphHopper - Směrovací služby{'\n'}© React Native & Expo - Framework{'\n'}© Michal Schneider - Kód aplikace, styl mapy apod.{'\n'}{'\n'}Všechna práva vyhrazena.
+              </Text>
+              <TouchableOpacity style={[s.btnPri,{alignSelf:'center',marginTop:10}]} onPress={() => setGdprModalVisible(false)}>
+                <Text style={s.btnPriT}>Zavřít</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
