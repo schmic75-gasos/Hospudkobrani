@@ -1204,13 +1204,16 @@ const FilterModal = ({ filters, onApply, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════════
 // OFFLINE OBLASTI MODAL (with dataset version check)
 // ══════════════════════════════════════════════════════════════════════════════
-const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
+const OfflineRegionsModal = ({ mapStyleId, onClose, onAreaDownloaded, userId }) => {
   const [areas, setAreas]         = useState([]);
   const [downloading, setDl]      = useState(null);
   const [pubCounts, setPubCounts] = useState({});
   const [versions, setVersions]   = useState({});
   const [progress, setProgress]   = useState({});
   const [packsReady, setPacksReady] = useState({});
+  const currentStyleUrl = useMemo(() => {
+    return MAPBOX_STYLE_OPTIONS.find(s => s.id === mapStyleId)?.url || MAPBOX_STYLE_URL;
+  }, [mapStyleId]);
 
   useEffect(()=>{ loadAreas(); },[]);
 
@@ -1278,7 +1281,7 @@ const OfflineRegionsModal = ({ onClose, onAreaDownloaded, userId }) => {
         if (!exists) {
           await MapboxNative.offlineManager.createPack({
             name: `map_${country.code}`,
-            styleURL: activeMapStyleUrl,
+            styleURL: currentStyleUrl,
             bounds: [
               [country.bounds.minLng, country.bounds.minLat],
               [country.bounds.maxLng, country.bounds.maxLat]
@@ -2599,7 +2602,7 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
           }}/>
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
-      {offlineRegionsMod&&<OfflineRegionsModal onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
+      {offlineRegionsMod&&<OfflineRegionsModal mapStyleId={mapStyleId} onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
       {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
       {selectedPoi && (
         <View style={s.poiToast}>
