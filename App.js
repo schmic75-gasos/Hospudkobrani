@@ -2216,8 +2216,8 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
     return (
       <View style={[s.center,{padding:24}]}> 
         <View style={s.authCard}>
-          <Text style={s.modalTitle}>Mapbox Native neni k dispozici</Text>
-          <Text style={[s.dimText,{marginTop:10,lineHeight:19}]}>Aplikace uz nepouziva WebView. Pro mapu je potreba development build nebo EAS build s nativnim modulem @rnmapbox/maps.</Text>
+          <Text style={s.modalTitle}>Mapbox Native není k dispozici</Text>
+          <Text style={[s.dimText,{marginTop:10,lineHeight:19}]}>Aplikace už nepoužívá WebView. Pro mapu je potřeba development build nebo EAS build s nativním modulem @rnmapbox/maps.</Text>
         </View>
       </View>
     );
@@ -4048,14 +4048,14 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
         <View style={{flex:1,backgroundColor:C.bg}}>
           <View style={{paddingTop:Platform.OS==='android'?(StatusBar.currentHeight||24):44,flex:1}}>
             <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:14,borderBottomWidth:1,borderColor:C.border}}>
-              <Text style={{color:C.cream,fontSize:18,fontWeight:'700'}}>GDPR & Copyright Info</Text>
+              <Text style={{color:C.cream,fontSize:18,fontWeight:'700'}}>GDPR, podmínky a copyright</Text>
               <TouchableOpacity onPress={() => setGdprModalVisible(false)}>
                 <Ionicons name="close" size={24} color={C.creamDim}/>
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={{padding:16,paddingBottom:28}}>
               <Text style={{color:C.cream,lineHeight:22,marginBottom:12}}>
-                GDPR INFORMACE:{'\n'}{'\n'}Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).{'\n'}{'\n'}Shromažďované údaje:{'\n'}- Uživatelské jméno, email, heslo{'\n'}- Poloha zařízení pro mapové funkce{'\n'}- Fotografie a komentáře{'\n'}- Statistiky návštěv hospod{'\n'}{'\n'}Údaje se používají pouze pro funkčnost aplikace a nejsou sdíleny s třetími stranami bez souhlasu.{'\n'}{'\n'}Práva uživatele:{'\n'}- Právo na přístup k údajům{'\n'}- Právo na opravu{'\n'}- Právo na výmaz{'\n'}- Kontakt: noemiamisa@gmail.com{'\n'}{'\n'}COPYRIGHTY:{'\n'}{'\n'}© Mapbox - Mapové dlaždice a data{'\n'}© GraphHopper - Směrovací služby{'\n'}© React Native & Expo - Framework{'\n'}© Michal Schneider - Kód aplikace, styl mapy apod.{'\n'}{'\n'}Všechna práva vyhrazena.
+                GDPR INFORMACE:{'\n'}{'\n'}Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).{'\n'}{'\n'}Shromažďované údaje:{'\n'}- Uživatelské jméno, email, heslo{'\n'}- Poloha zařízení pro mapové funkce{'\n'}- Fotografie a komentáře{'\n'}- Statistiky návštěv hospod{'\n'}{'\n'}Údaje se používají pouze pro funkčnost aplikace, doporučení a zlepšení uživatelského zážitku. Není-li uvedeno jinak, nejsou sdíleny s třetími stranami bez výslovného souhlasu.{'\n'}{'\n'}Podmínky použití:{'\n'}- Aplikace nepodniká aktivní kontrolu věku uživatelů. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkoholické nápoje, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku. Hospůdkobraní nenese odpovědnost za situace, kdy si mladistvý v podniku dá alkohol.{'\n'}- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony a vlastní provozní pravidla.{'\n'}{'\n'}Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu o svém podniku. Požadavky zasílejte na email noemiamisa@gmail.com nebo přes kontaktní formuláře a budou vyřízeny v souladu s platnou legislativou.{'\n'}{'\n'}Práva uživatele:{'\n'}- Právo na přístup k údajům{'\n'}- Právo na opravu{'\n'}- Právo na výmaz{'\n'}- Kontakt: noemiamisa@gmail.com{'\n'}{'\n'}COPYRIGHTY:{'\n'}{'\n'}© Mapbox a OpenStreetMap contributors - Mapové dlaždice a data{'\n'}© GraphHopper - Směrovací služby{'\n'}© React Native & Expo - Framework{'\n'}© Michal Schneider - Kód aplikace, styl mapy apod.{'\n'}{'\n'}Všechna práva vyhrazena.
               </Text>
               <TouchableOpacity style={[s.btnPri,{alignSelf:'center',marginTop:10}]} onPress={() => setGdprModalVisible(false)}>
                 <Text style={s.btnPriT}>Zavřít</Text>
