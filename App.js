@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.12 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.13
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -202,7 +202,7 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.4.12';
+const APP_VERSION = '1.4.13';
 
 let _telemetryEnabled = true;
 AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) _telemetryEnabled = v !== '0'; }).catch(() => {});
@@ -997,7 +997,9 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
             {pub.opening_hours && (
               <View style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:6}}>
                 <Ionicons name="time-outline" size={14} color={C.creamDim}/>
-                <Text style={s.dimText}>{pub.opening_hours}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{flex:1}}>
+                  <Text style={[s.dimText,{flexShrink:0}]}>{pub.opening_hours}</Text>
+                </ScrollView>
               </View>
             )}
             {pub.note && (
@@ -2602,7 +2604,9 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
           {selPub.opening_hours&&(
             <View style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:4}}>
               <Ionicons name="time-outline" size={13} color={C.creamDim}/>
-              <Text style={s.dimText}>{selPub.opening_hours}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{flex:1}}>
+                <Text style={[s.dimText,{flexShrink:0}]}>{selPub.opening_hours}</Text>
+              </ScrollView>
             </View>
           )}
           {transportLoading ? (
@@ -4340,7 +4344,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.12 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.13 - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <GdprInfoModal visible={gdprModalVisible} onClose={() => setGdprModalVisible(false)} />
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>

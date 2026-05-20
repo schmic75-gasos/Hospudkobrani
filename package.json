@@ -1,6 +1,6 @@
 {
   "name": "hospudkobrani",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
