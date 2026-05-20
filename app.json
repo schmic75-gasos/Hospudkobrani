@@ -3,7 +3,7 @@
       "scheme": "hospudkobrani",
     "name": "Hospůdkobraní",
     "slug": "hospudkobrani",
-    "version": "1.4.11",
+    "version": "1.4.12",
     "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

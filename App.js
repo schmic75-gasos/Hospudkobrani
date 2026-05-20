@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.11 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.12 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -202,7 +202,10 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.4.10';
+const APP_VERSION = '1.4.12';
+
+let _telemetryEnabled = true;
+AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) _telemetryEnabled = v !== '0'; }).catch(() => {});
 
 const _telemetryContext = () => {
   const { width, height } = Dimensions.get('window');
@@ -219,6 +222,7 @@ const _telemetryContext = () => {
 };
 
 const trackEvent = (event, props = {}) => {
+  if (!_telemetryEnabled) return;
   apiFetch('/telemetry', {
     method: 'POST',
     body: JSON.stringify({ event, props: { ..._telemetryContext(), ...props }, ts: new Date().toISOString() }),
@@ -2898,6 +2902,74 @@ const ChangePasswordModal = ({ onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// GDPR INFO MODAL (sdílený)
+// ══════════════════════════════════════════════════════════════════════════════
+const GdprInfoModal = ({ visible, onClose }) => (
+  <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
+    <View style={{flex:1,backgroundColor:C.bg}}>
+      <View style={{paddingTop:Platform.OS==='android'?(StatusBar.currentHeight||24):44,flex:1}}>
+        <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:14,borderBottomWidth:1,borderColor:C.border}}>
+          <Text style={{color:C.cream,fontSize:18,fontWeight:'700'}}>GDPR, podmínky a copyright</Text>
+          <TouchableOpacity onPress={onClose}>
+            <Ionicons name="close" size={24} color={C.creamDim}/>
+          </TouchableOpacity>
+        </View>
+        <ScrollView contentContainerStyle={{padding:16,paddingBottom:28}}>
+          <Text style={{color:C.cream,lineHeight:22,marginBottom:12}}>
+            {'GDPR INFORMACE\n\n'}
+            {'Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\n'}
+            {'SHROMAŽĎOVANÉ ÚDAJE\n'}
+            {'- Uživatelské jméno, e-mail, hashované heslo\n'}
+            {'- Přibližná poloha zařízení (pouze pro mapové a navigační funkce, není trvale ukládána)\n'}
+            {'- Fotografie nahrané uživatelem (profilovka, hospůdky)\n'}
+            {'- Záznamy o návštěvách hospůdek (hodnocení, poznámky, datum, způsob dopravy)\n'}
+            {'- Statistiky aktivit a plněné výzvy\n'}
+            {'- Push token pro zasílání notifikací\n\n'}
+            {'TELEMETRIE A TECHNICKÁ DATA\n'}
+            {'Aplikace sbírá anonymizovaná telemetrická data za účelem zlepšení stability a uživatelského zážitku. Tato data zahrnují: typ události (např. otevření aplikace, synchronizace návštěv, chyba), verzi aplikace, typ a verzi operačního systému, rozlišení a orientaci obrazovky, model a výrobce zařízení. Telemetrická data nejsou přímo identifikující (neobsahují jméno ani e-mail). Ke každé události je volitelně přiřazeno anonymní ID uživatele pro analýzu chybových stavů. Odesílání telemetrie lze kdykoli vypnout v sekci Profil → Nastavení → Odesílání telemetrie.\n\n'}
+            {'FOTOGRAFIE A SOUKROMÍ\n'}
+            {'Fotografie nahrané k návštěvám hospůdek nebo jako profilovka jsou ukládány na zabezpečeném serveru. Viditelnost závisí na nastavení:\n'}
+            {'- Veřejné fotky: viditelné všem uživatelům v galerii a na profilu\n'}
+            {'- Soukromé fotky: viditelné pouze tobě\n'}
+            {'- Profilovka: veřejná nebo pouze pro sledující (nastavitelné v Profil → Nastavení)\n'}
+            {'Uživatel může kdykoli smazat vlastní fotografie přímo v aplikaci.\n\n'}
+            {'NASTAVENÍ SOUKROMÍ PROFILU\n'}
+            {'V sekci Profil → Nastavení lze ovládat:\n'}
+            {'- Viditelnost profilové fotky (veřejná / pouze sledující)\n'}
+            {'- Zobrazení data registrace na veřejném profilu\n'}
+            {'- Zobrazení seznamu návštěv na veřejném profilu\n'}
+            {'- Ukládání poslední polohy mapy\n'}
+            {'- Odesílání anonymní telemetrie\n\n'}
+            {'SDÍLENÍ ÚDAJŮ\n'}
+            {'Údaje jsou ukládány na serveru provozovaném Rosti.cz a nejsou aktivně sdíleny s třetími stranami. Mapová data pocházejí od Mapbox (Mapbox Terms of Service) a GraphHopper (Apache 2.0). Trasování se zpracovává na straně klienta, GPS souřadnice nejsou trvale ukládány.\n\n'}
+            {'PODMÍNKY POUŽITÍ\n'}
+            {'- Aplikace nepodniká aktivní kontrolu věku. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkohol, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku.\n'}
+            {'- Obsah nahraný uživatelem musí být v souladu s platnými zákony a nesmí obsahovat nevhodný, urážlivý ani nelegální materiál.\n'}
+            {'- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony.\n\n'}
+            {'Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu. Požadavky zasílejte na noemiamisa@gmail.com.\n\n'}
+            {'PRÁVA UŽIVATELE\n'}
+            {'- Právo na přístup k osobním údajům\n'}
+            {'- Právo na opravu nesprávných údajů\n'}
+            {'- Právo na výmaz (smazání účtu přímo v nastavení profilu)\n'}
+            {'- Právo na přenositelnost dat\n'}
+            {'- Kontakt: noemiamisa@gmail.com\n\n'}
+            {'COPYRIGHTY\n\n'}
+            {'© Mapbox a OpenStreetMap contributors – Mapové dlaždice a data\n'}
+            {'© GraphHopper – Směrovací služby\n'}
+            {'© React Native & Expo – Framework\n'}
+            {'© Michal Schneider – Kód aplikace, styl mapy apod.\n\n'}
+            {'Všechna práva vyhrazena.'}
+          </Text>
+          <TouchableOpacity style={[s.btnPri,{alignSelf:'center',marginTop:10,paddingHorizontal:48}]} onPress={onClose}>
+            <Text style={s.btnPriT}>Zavřít</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
 // AUTH SCREEN
 // ══════════════════════════════════════════════════════════════════════════════
 const AuthScreen = ({ onLogin }) => {
@@ -2907,11 +2979,14 @@ const AuthScreen = ({ onLogin }) => {
   const [nick, setNick]   = useState('');
   const [busy, setBusy]   = useState(false);
   const [forgotMod, setForgotMod] = useState(false);
+  const [gdprAccepted, setGdprAccepted] = useState(false);
+  const [gdprVisible, setGdprVisible]   = useState(false);
   const fa = useRef(new Animated.Value(0)).current;
   useEffect(()=>{ Animated.timing(fa,{toValue:1,duration:800,useNativeDriver:true}).start(); },[]);
 
   const submit = async()=>{
     if(!email||!pw||(mode==='register'&&!nick)){Alert.alert('Chybí údaje','Vyplň vše.');return;}
+    if(mode==='register'&&!gdprAccepted){Alert.alert('Podmínky','Prosím zaškrtni souhlas s podmínkami.');return;}
     setBusy(true);
     try{
       const body=mode==='login'?{email,password:pw}:{email,password:pw,username:nick};
@@ -2943,7 +3018,7 @@ await AsyncStorage.setItem('user_data',JSON.stringify(data.user));
           <View style={s.authCard}>
             <View style={s.authTabs}>
               {['login','register'].map(m=>(
-                <TouchableOpacity key={m} style={[s.authTab,mode===m&&s.authTabOn]} onPress={()=>setMode(m)}>
+                <TouchableOpacity key={m} style={[s.authTab,mode===m&&s.authTabOn]} onPress={()=>{setMode(m);setGdprAccepted(false);}}>
                   <Text style={[s.authTabT,mode===m&&s.authTabTOn]}>{m==='login'?'Přihlášení':'Registrace'}</Text>
                 </TouchableOpacity>
               ))}
@@ -2951,7 +3026,18 @@ await AsyncStorage.setItem('user_data',JSON.stringify(data.user));
             {mode==='register'&&<TextInput style={s.input} placeholder="Přezdívka (nick)" placeholderTextColor={C.creamDim} value={nick} onChangeText={setNick} autoCapitalize="none"/>}
             <TextInput style={s.input} placeholder="E-mail" placeholderTextColor={C.creamDim} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none"/>
             <TextInput style={s.input} placeholder="Heslo" placeholderTextColor={C.creamDim} value={pw} onChangeText={setPw} secureTextEntry/>
-            <TouchableOpacity style={s.btnPri} onPress={submit} disabled={busy}>
+            {mode==='register'&&(
+              <TouchableOpacity style={{flexDirection:'row',alignItems:'center',gap:8,marginBottom:10}} onPress={()=>setGdprAccepted(v=>!v)} activeOpacity={0.8}>
+                <View style={{width:22,height:22,borderRadius:5,borderWidth:2,borderColor:C.amber,backgroundColor:gdprAccepted?C.amber:'transparent',alignItems:'center',justifyContent:'center'}}>
+                  {gdprAccepted&&<Ionicons name="checkmark" size={14} color={C.bg}/>}
+                </View>
+                <Text style={{color:C.creamDim,fontSize:13,flex:1}}>
+                  {'Souhlasím s '}
+                  <Text style={{color:C.amber,textDecorationLine:'underline'}} onPress={()=>setGdprVisible(true)}>podmínkami</Text>
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[s.btnPri,mode==='register'&&!gdprAccepted&&{opacity:0.4}]} onPress={submit} disabled={busy||(mode==='register'&&!gdprAccepted)}>
               {busy?<ActivityIndicator color={C.bg}/>:<>
                 <Ionicons name="log-in-outline" size={18} color={C.bg}/>
                 <Text style={s.btnPriT}>{mode==='login'?'Vstoupit do hospody':'Zaregistrovat se'}</Text>
@@ -2967,6 +3053,7 @@ await AsyncStorage.setItem('user_data',JSON.stringify(data.user));
         </Animated.View>
       </LinearGradient>
       {forgotMod && <ForgotPasswordModal onClose={()=>setForgotMod(false)} onSend={sendForgotPw}/>}
+      <GdprInfoModal visible={gdprVisible} onClose={()=>setGdprVisible(false)}/>
     </View>
   );
 };
@@ -3855,6 +3942,11 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
   const [delPw, setDelPw]             = useState('');
   const [delLoading, setDelLoading]   = useState(false);
   const [gdprModalVisible, setGdprModalVisible] = useState(false);
+  const [telemetryOn, setTelemetryOn] = useState(true);
+
+  useEffect(()=>{
+    AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) setTelemetryOn(v !== '0'); }).catch(()=>{});
+  }, []);
 
   useEffect(()=>{ loadAll(); checkOff(); const interval = setInterval(checkNewLikes, 60000); return () => clearInterval(interval); },[]);
   useEffect(()=>{ loadStats(); },[period]);
@@ -4166,6 +4258,25 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
       </View>
     </TouchableOpacity>
 
+    {/* Telemetry toggle */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const val = !telemetryOn;
+      _telemetryEnabled = val;
+      await AsyncStorage.setItem('telemetry_enabled', val ? '1' : '0');
+      setTelemetryOn(val);
+    }}>
+      <Ionicons name="analytics-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Odesílání telemetrie {telemetryOn ? 'zapnuto' : 'vypnuto'}
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{width:20,height:20,borderRadius:10,backgroundColor:telemetryOn?C.green:C.bgCardAlt,borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'}}>
+          <Ionicons name={telemetryOn?'checkmark':'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
+      </View>
+    </TouchableOpacity>
+
     {/* Show join date on public profile */}
     <TouchableOpacity style={s.settRow} onPress={async () => {
       const val = me.show_join_date === false ? true : false;
@@ -4229,69 +4340,9 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.11 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.12 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
-      <Modal visible={gdprModalVisible} animationType="slide" transparent statusBarTranslucent>
-        <View style={{flex:1,backgroundColor:C.bg}}>
-          <View style={{paddingTop:Platform.OS==='android'?(StatusBar.currentHeight||24):44,flex:1}}>
-            <View style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:14,borderBottomWidth:1,borderColor:C.border}}>
-              <Text style={{color:C.cream,fontSize:18,fontWeight:'700'}}>GDPR, podmínky a copyright</Text>
-              <TouchableOpacity onPress={() => setGdprModalVisible(false)}>
-                <Ionicons name="close" size={24} color={C.creamDim}/>
-              </TouchableOpacity>
-            </View>
-            <ScrollView contentContainerStyle={{padding:16,paddingBottom:28}}>
-              <Text style={{color:C.cream,lineHeight:22,marginBottom:12}}>
-                {'GDPR INFORMACE\n\n'}
-                {'Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\n'}
-                {'SHROMAŽĎOVANÉ ÚDAJE\n'}
-                {'- Uživatelské jméno, e-mail, hashované heslo\n'}
-                {'- Přibližná poloha zařízení (pouze pro mapové a navigační funkce, není trvale ukládána)\n'}
-                {'- Fotografie nahrané uživatelem (profilovka, hospůdky)\n'}
-                {'- Záznamy o návštěvách hospůdek (hodnocení, poznámky, datum, způsob dopravy)\n'}
-                {'- Statistiky aktivit a plněné výzvy\n'}
-                {'- Push token pro zasílání notifikací\n\n'}
-                {'TELEMETRIE A TECHNICKÁ DATA\n'}
-                {'Aplikace sbírá anonymizovaná telemetrická data za účelem zlepšení stability a uživatelského zážitku. Tato data zahrnují: typ události (např. otevření aplikace, synchronizace návštěv, chyba), verzi aplikace, typ a verzi operačního systému, rozlišení a orientaci obrazovky, model a výrobce zařízení. Telemetrická data nejsou přímo identifikující (neobsahují jméno ani e-mail). Ke každé události je volitelně přiřazeno anonymní ID uživatele pro analýzu chybových stavů. Odesílání telemetrie nelze v současné verzi vypnout. Pokud s tím nesouhlasíš, obraťse na nás na e-mail níže.\n\n'}
-                {'FOTOGRAFIE A SOUKROMÍ\n'}
-                {'Fotografie nahrané k návštěvám hospůdek nebo jako profilovka jsou ukládány na zabezpečeném serveru. Viditelnost závisí na nastavení:\n'}
-                {'- Veřejné fotky: viditelné všem uživatelům v galerii a na profilu\n'}
-                {'- Soukromé fotky: viditelné pouze tobě\n'}
-                {'- Profilovka: veřejná nebo pouze pro sledující (nastavitelné v Profil → Nastavení)\n'}
-                {'Uživatel může kdykoli smazat vlastní fotografie přímo v aplikaci.\n\n'}
-                {'NASTAVENÍ SOUKROMÍ PROFILU\n'}
-                {'V sekci Profil → Nastavení lze ovládat:\n'}
-                {'- Viditelnost profilové fotky (veřejná / pouze sledující)\n'}
-                {'- Zobrazení data registrace na veřejném profilu\n'}
-                {'- Zobrazení seznamu návštěv na veřejném profilu\n'}
-                {'- Ukládání poslední polohy mapy\n\n'}
-                {'SDÍLENÍ ÚDAJŮ\n'}
-                {'Údaje jsou ukládány na serveru provozovaném Rosti.cz a nejsou aktivně sdíleny s třetími stranami. Mapová data pocházejí od Mapbox (Mapbox Terms of Service) a GraphHopper (Apache 2.0). Trasování se zpracovává na straně klienta, GPS souřadnice nejsou trvale ukládány.\n\n'}
-                {'PODMÍNKY POUŽITÍ\n'}
-                {'- Aplikace nepodniká aktivní kontrolu věku. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkohol, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku.\n'}
-                {'- Obsah nahraný uživatelem musí být v souladu s platnými zákony a nesmí obsahovat nevhodný, urážlivý ani nelegální materiál.\n'}
-                {'- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony.\n\n'}
-                {'Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu. Požadavky zasílejte na noemiamisa@gmail.com.\n\n'}
-                {'PRÁVA UŽIVATELE\n'}
-                {'- Právo na přístup k osobním údajům\n'}
-                {'- Právo na opravu nesprávných údajů\n'}
-                {'- Právo na výmaz (smazání účtu přímo v nastavení profilu)\n'}
-                {'- Právo na přenositelnost dat\n'}
-                {'- Kontakt: noemiamisa@gmail.com\n\n'}
-                {'COPYRIGHTY\n\n'}
-                {'© Mapbox a OpenStreetMap contributors – Mapové dlaždice a data\n'}
-                {'© GraphHopper – Směrovací služby\n'}
-                {'© React Native & Expo – Framework\n'}
-                {'© Michal Schneider – Kód aplikace, styl mapy apod.\n\n'}
-                {'Všechna práva vyhrazena.'}
-              </Text>
-              <TouchableOpacity style={[s.btnPri,{alignSelf:'center',marginTop:10}]} onPress={() => setGdprModalVisible(false)}>
-                <Text style={s.btnPriT}>Zavřít</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <GdprInfoModal visible={gdprModalVisible} onClose={() => setGdprModalVisible(false)} />
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
