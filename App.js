@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.10 (beta, no-production version)
+ * Hospůdkobraní – App.js v1.4.11 (beta, no-production version)
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -455,47 +455,33 @@ const FollowButton = ({ userId, isFollowing, onFollowChange, size='normal' }) =>
     setLoading(false);
   };
 
-  const btnStyle = size === 'small' 
+  const btnStyle = size === 'small'
     ? { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 }
     : { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 };
 
+  if (following) {
+    return (
+      <View style={[btnStyle, { backgroundColor: C.bgCardAlt, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="checkmark-circle" size={size === 'small' ? 14 : 16} color={C.green} />
+        <Text style={{ fontWeight: '700', fontSize: size === 'small' ? 12 : 14, color: C.creamDim, marginLeft: 4 }}>Sleduji</Text>
+      </View>
+    );
+  }
+
   return (
-    <TouchableOpacity 
-      style={[
-        btnStyle,
-        {
-          backgroundColor: following ? C.red : C.amber,
-          borderWidth: 1,
-          borderColor: following ? C.red : C.amber,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: loading ? 0.6 : 1
-        }
-      ]}
+    <TouchableOpacity
+      style={[btnStyle, { backgroundColor: C.amber, borderWidth: 1, borderColor: C.amber, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: loading ? 0.6 : 1 }]}
       onPress={toggleFollow}
       disabled={loading}
       activeOpacity={0.8}
     >
-      {loading ? (
-        <ActivityIndicator size="small" color={following ? C.white : C.bg} />
-      ) : (
-        <>
-          <Ionicons 
-            name={following ? 'person-remove' : 'person-add'} 
-            size={size === 'small' ? 14 : 16}
-            color={following ? C.white : C.bg} 
-          />
-          <Text style={{
-            fontWeight: '700',
-            fontSize: size === 'small' ? 12 : 14,
-            color: following ? C.white : C.bg,
-            marginLeft: 4
-          }}>
-            {following ? 'Od sledovat' : 'Sledovat'}
-          </Text>
-        </>
-      )}
+      {loading
+        ? <ActivityIndicator size="small" color={C.bg} />
+        : <>
+            <Ionicons name="person-add" size={size === 'small' ? 14 : 16} color={C.bg} />
+            <Text style={{ fontWeight: '700', fontSize: size === 'small' ? 12 : 14, color: C.bg, marginLeft: 4 }}>Sledovat</Text>
+          </>
+      }
     </TouchableOpacity>
   );
 };
@@ -3272,7 +3258,8 @@ const ChatTab = ({ user }) => {
       try{
         const token = await getToken();
         const base = API.replace('/api','');
-        socketRef.current = io(base, {
+        if (!mounted) return;
+        const sock = io(base, {
           transports: ['polling','websocket'],
           auth: { token },
           query: { token },
@@ -3281,10 +3268,11 @@ const ChatTab = ({ user }) => {
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
         });
-        socketRef.current.on('connect', ()=>console.log('socket connected'));
-        socketRef.current.on('connect_error', err=>console.warn('socket connect error', err));
-        socketRef.current.on('disconnect', ()=>console.log('socket disconnected'));
-        socketRef.current.on('chat:new', (m)=>{
+        socketRef.current = sock;
+        sock.on('connect', ()=>console.log('socket connected'));
+        sock.on('connect_error', err=>console.warn('socket connect error', err));
+        sock.on('disconnect', ()=>console.log('socket disconnected'));
+        sock.on('chat:new', (m)=>{
           setMsgs(prev=>{
             const exists = prev.find(p=>p.id===m.id);
             if(exists) return prev;
@@ -3311,7 +3299,16 @@ const ChatTab = ({ user }) => {
       }catch(e){console.warn('Socket init failed',e)}
     };
     init();
-    return ()=>{ mounted=false; try{ socketRef.current?.disconnect(); }catch(e){} };
+    return ()=>{
+      mounted = false;
+      if (socketRef.current) {
+        try {
+          socketRef.current.io.opts.reconnection = false;
+          socketRef.current.disconnect();
+        } catch(e) {}
+        socketRef.current = null;
+      }
+    };
   },[]);
 
   const loadMsgs = async()=>{
@@ -3804,9 +3801,44 @@ const ActivityCalendar = () => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PERSONAL RECORDS
+// ══════════════════════════════════════════════════════════════════════════════
+const PersonalRecords = () => {
+  const [rec, setRec] = useState(null);
+  useEffect(() => { apiFetch('/profile/records').then(setRec).catch(() => {}); }, []);
+  if (!rec) return null;
+  const rows = [
+    { icon:'flame-outline',         color:C.red,    label:'Nejvyšší streak',          val:rec.max_streak        ? `${rec.max_streak} dní`         : '–' },
+    { icon:'document-text-outline', color:C.teal,   label:'Nejdelší recenze',         val:rec.longest_note_len  ? `${rec.longest_note_len} znaků` : '–', sub:rec.longest_note_pub },
+    { icon:'beer-outline',          color:C.amber,  label:'Nejdelší název hospůdky',  val:rec.longest_name  || '–' },
+    { icon:'arrow-back-outline',    color:C.purple, label:'Nejzápadnější hospůdka',   val:rec.westernmost   || '–' },
+    { icon:'arrow-up-outline',      color:C.green,  label:'Nejsevernější hospůdka',   val:rec.northernmost  || '–' },
+    { icon:'arrow-down-outline',    color:C.red,    label:'Nejjižnější hospůdka',     val:rec.southernmost  || '–' },
+    { icon:'arrow-forward-outline', color:C.amber,  label:'Nejvýchodnější hospůdka',  val:rec.easternmost   || '–' },
+  ];
+  return (
+    <View style={{marginHorizontal:16,marginBottom:16}}>
+      <Text style={s.secLabel}>Osobní rekordy</Text>
+      <View style={{backgroundColor:C.bgCard,borderRadius:14,borderWidth:1,borderColor:C.border,overflow:'hidden'}}>
+        {rows.map((r,i)=>(
+          <View key={i} style={{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:10,paddingHorizontal:12,borderBottomWidth:i<rows.length-1?1:0,borderBottomColor:C.border}}>
+            <Ionicons name={r.icon} size={17} color={r.color}/>
+            <View style={{flex:1}}>
+              <Text style={{color:C.creamDim,fontSize:11}}>{r.label}</Text>
+              {r.sub ? <Text style={{color:C.creamDim,fontSize:10,fontStyle:'italic'}} numberOfLines={1}>{r.sub}</Text> : null}
+            </View>
+            <Text style={{color:C.cream,fontWeight:'700',fontSize:13,textAlign:'right',maxWidth:'55%'}} numberOfLines={1}>{r.val}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PROFILE SCREEN (renovated with likes on my photos and new like notifications)
 // ══════════════════════════════════════════════════════════════════════════════
-const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
+const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
   const [me, setMe]             = useState(user);
   const [editBio, setEditBio]   = useState(false);
   const [bio, setBio]           = useState(user.bio||'');
@@ -3828,8 +3860,12 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
   useEffect(()=>{ loadStats(); },[period]);
 
   const loadAll = async()=>{
-    await Promise.all([loadStats(), loadPhotos(), loadRank()]);
+    await Promise.all([loadStats(), loadPhotos(), loadRank(), loadSettings()]);
     setLoading(false);
+  };
+
+  const loadSettings = async () => {
+    try { const d = await apiFetch('/profile/settings'); setMe(prev => ({ ...prev, ...d })); } catch {}
   };
 
   const loadStats = async()=>{
@@ -3959,11 +3995,16 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
         <Text style={s.dimText}>{me.email}</Text>
 
         {rank&&(
-          <View style={{flexDirection:'row',alignItems:'center',gap:6,marginTop:8,padding:8,backgroundColor:C.bgCardAlt,borderRadius:10,borderWidth:1,borderColor:C.border}}>
+          <TouchableOpacity
+            onPress={()=>onNavigate?.('community')}
+            activeOpacity={0.75}
+            style={{flexDirection:'row',alignItems:'center',gap:6,marginTop:8,padding:8,backgroundColor:C.bgCardAlt,borderRadius:10,borderWidth:1,borderColor:C.border}}
+          >
             <Ionicons name="trophy-outline" size={16} color={C.gold}/>
             <Text style={{color:C.gold,fontWeight:'700',fontSize:13}}>#{rank.position} v žebříčku</Text>
             <Text style={s.dimText}>· {rank.total_users} hráčů</Text>
-          </View>
+            <Ionicons name="chevron-forward" size={13} color={C.border} style={{marginLeft:'auto'}}/>
+          </TouchableOpacity>
         )}
 
         {editBio?(
@@ -4046,6 +4087,9 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
       {/* Activity calendar heatmap */}
       <ActivityCalendar/>
 
+      {/* Personal records */}
+      <PersonalRecords/>
+
       {/* Offline sync */}
       {offQ>0&&(
         <View style={s.offBanner}>
@@ -4122,6 +4166,46 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
       </View>
     </TouchableOpacity>
 
+    {/* Show join date on public profile */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const val = me.show_join_date === false ? true : false;
+      try {
+        await apiFetch('/profile/settings', { method:'PUT', body:JSON.stringify({ show_join_date: val }) });
+        setMe(prev => ({ ...prev, show_join_date: val }));
+      } catch(e) { Alert.alert('Chyba', e.message); }
+    }}>
+      <Ionicons name="calendar-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Datum registrace {me.show_join_date === false ? 'skryté' : 'veřejné'}
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{width:20,height:20,borderRadius:10,backgroundColor:me.show_join_date!==false?C.green:C.bgCardAlt,borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'}}>
+          <Ionicons name={me.show_join_date!==false?'checkmark':'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
+      </View>
+    </TouchableOpacity>
+
+    {/* Show visits list on public profile */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const val = me.show_visits_on_profile === false ? true : false;
+      try {
+        await apiFetch('/profile/settings', { method:'PUT', body:JSON.stringify({ show_visits_on_profile: val }) });
+        setMe(prev => ({ ...prev, show_visits_on_profile: val }));
+      } catch(e) { Alert.alert('Chyba', e.message); }
+    }}>
+      <Ionicons name="list-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Seznam návštěv na profilu {me.show_visits_on_profile === false ? 'skrytý' : 'veřejný'}
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{width:20,height:20,borderRadius:10,backgroundColor:me.show_visits_on_profile!==false?C.green:C.bgCardAlt,borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'}}>
+          <Ionicons name={me.show_visits_on_profile!==false?'checkmark':'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
+      </View>
+    </TouchableOpacity>
+
     <TouchableOpacity style={s.settRow} onPress={()=>setChangePwMod(true)}>
       <Ionicons name="lock-closed-outline" size={18} color={C.amber}/>
       <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>Změnit heslo</Text>
@@ -4145,7 +4229,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.10 (BETA) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.11 (BETA) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <Modal visible={gdprModalVisible} animationType="slide" transparent statusBarTranslucent>
         <View style={{flex:1,backgroundColor:C.bg}}>
@@ -4158,7 +4242,48 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial }) => {
             </View>
             <ScrollView contentContainerStyle={{padding:16,paddingBottom:28}}>
               <Text style={{color:C.cream,lineHeight:22,marginBottom:12}}>
-                GDPR INFORMACE:{'\n'}{'\n'}Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).{'\n'}{'\n'}Shromažďované údaje:{'\n'}- Uživatelské jméno, email, heslo{'\n'}- Poloha zařízení pro mapové funkce{'\n'}- Fotografie a komentáře{'\n'}- Statistiky návštěv hospod{'\n'}{'\n'}Údaje se používají pouze pro funkčnost aplikace, doporučení a zlepšení uživatelského zážitku. Není-li uvedeno jinak, nejsou sdíleny s třetími stranami bez výslovného souhlasu.{'\n'}{'\n'}Podmínky použití:{'\n'}- Aplikace nepodniká aktivní kontrolu věku uživatelů. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkoholické nápoje, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku. Hospůdkobraní nenese odpovědnost za situace, kdy si mladistvý v podniku dá alkohol.{'\n'}- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony a vlastní provozní pravidla.{'\n'}{'\n'}Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu o svém podniku. Požadavky zasílejte na email noemiamisa@gmail.com nebo přes kontaktní formuláře a budou vyřízeny v souladu s platnou legislativou.{'\n'}{'\n'}Práva uživatele:{'\n'}- Právo na přístup k údajům{'\n'}- Právo na opravu{'\n'}- Právo na výmaz{'\n'}- Kontakt: noemiamisa@gmail.com{'\n'}{'\n'}COPYRIGHTY:{'\n'}{'\n'}© Mapbox a OpenStreetMap contributors - Mapové dlaždice a data{'\n'}© GraphHopper - Směrovací služby{'\n'}© React Native & Expo - Framework{'\n'}© Michal Schneider - Kód aplikace, styl mapy apod.{'\n'}{'\n'}Všechna práva vyhrazena.
+                {'GDPR INFORMACE\n\n'}
+                {'Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\n'}
+                {'SHROMAŽĎOVANÉ ÚDAJE\n'}
+                {'- Uživatelské jméno, e-mail, hashované heslo\n'}
+                {'- Přibližná poloha zařízení (pouze pro mapové a navigační funkce, není trvale ukládána)\n'}
+                {'- Fotografie nahrané uživatelem (profilovka, hospůdky)\n'}
+                {'- Záznamy o návštěvách hospůdek (hodnocení, poznámky, datum, způsob dopravy)\n'}
+                {'- Statistiky aktivit a plněné výzvy\n'}
+                {'- Push token pro zasílání notifikací\n\n'}
+                {'TELEMETRIE A TECHNICKÁ DATA\n'}
+                {'Aplikace sbírá anonymizovaná telemetrická data za účelem zlepšení stability a uživatelského zážitku. Tato data zahrnují: typ události (např. otevření aplikace, synchronizace návštěv, chyba), verzi aplikace, typ a verzi operačního systému, rozlišení a orientaci obrazovky, model a výrobce zařízení. Telemetrická data nejsou přímo identifikující (neobsahují jméno ani e-mail). Ke každé události je volitelně přiřazeno anonymní ID uživatele pro analýzu chybových stavů. Odesílání telemetrie nelze v současné verzi vypnout. Pokud s tím nesouhlasíš, obraťse na nás na e-mail níže.\n\n'}
+                {'FOTOGRAFIE A SOUKROMÍ\n'}
+                {'Fotografie nahrané k návštěvám hospůdek nebo jako profilovka jsou ukládány na zabezpečeném serveru. Viditelnost závisí na nastavení:\n'}
+                {'- Veřejné fotky: viditelné všem uživatelům v galerii a na profilu\n'}
+                {'- Soukromé fotky: viditelné pouze tobě\n'}
+                {'- Profilovka: veřejná nebo pouze pro sledující (nastavitelné v Profil → Nastavení)\n'}
+                {'Uživatel může kdykoli smazat vlastní fotografie přímo v aplikaci.\n\n'}
+                {'NASTAVENÍ SOUKROMÍ PROFILU\n'}
+                {'V sekci Profil → Nastavení lze ovládat:\n'}
+                {'- Viditelnost profilové fotky (veřejná / pouze sledující)\n'}
+                {'- Zobrazení data registrace na veřejném profilu\n'}
+                {'- Zobrazení seznamu návštěv na veřejném profilu\n'}
+                {'- Ukládání poslední polohy mapy\n\n'}
+                {'SDÍLENÍ ÚDAJŮ\n'}
+                {'Údaje jsou ukládány na serveru provozovaném Rosti.cz a nejsou aktivně sdíleny s třetími stranami. Mapová data pocházejí od Mapbox (Mapbox Terms of Service) a GraphHopper (Apache 2.0). Trasování se zpracovává na straně klienta, GPS souřadnice nejsou trvale ukládány.\n\n'}
+                {'PODMÍNKY POUŽITÍ\n'}
+                {'- Aplikace nepodniká aktivní kontrolu věku. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkohol, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku.\n'}
+                {'- Obsah nahraný uživatelem musí být v souladu s platnými zákony a nesmí obsahovat nevhodný, urážlivý ani nelegální materiál.\n'}
+                {'- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony.\n\n'}
+                {'Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu. Požadavky zasílejte na noemiamisa@gmail.com.\n\n'}
+                {'PRÁVA UŽIVATELE\n'}
+                {'- Právo na přístup k osobním údajům\n'}
+                {'- Právo na opravu nesprávných údajů\n'}
+                {'- Právo na výmaz (smazání účtu přímo v nastavení profilu)\n'}
+                {'- Právo na přenositelnost dat\n'}
+                {'- Kontakt: noemiamisa@gmail.com\n\n'}
+                {'COPYRIGHTY\n\n'}
+                {'© Mapbox a OpenStreetMap contributors – Mapové dlaždice a data\n'}
+                {'© GraphHopper – Směrovací služby\n'}
+                {'© React Native & Expo – Framework\n'}
+                {'© Michal Schneider – Kód aplikace, styl mapy apod.\n\n'}
+                {'Všechna práva vyhrazena.'}
               </Text>
               <TouchableOpacity style={[s.btnPri,{alignSelf:'center',marginTop:10}]} onPress={() => setGdprModalVisible(false)}>
                 <Text style={s.btnPriT}>Zavřít</Text>
@@ -4357,7 +4482,7 @@ export default function App() {
         {tab==='visits'     && <VisitsScreen user={user}/>}
         {tab==='community'  && <CommunityScreen user={user}/>}
         {tab==='challenges' && <ChallengesScreen user={user}/>}
-        {tab==='profile'    && <ProfileScreen user={user} onLogout={()=>setUser(null)} onShowTutorial={()=>setShowTutorial(true)} />}
+        {tab==='profile'    && <ProfileScreen user={user} onLogout={()=>setUser(null)} onShowTutorial={()=>setShowTutorial(true)} onNavigate={setTab}/>}
       </View>
       <TabBar active={tab} onTab={setTab}/>
       <TutorialModal visible={showTutorial} onClose={()=>setShowTutorial(false)} />
