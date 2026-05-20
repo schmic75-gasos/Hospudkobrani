@@ -1,9 +1,9 @@
 {
   "expo": {
-      "scheme": "hospudkobrani",
+    "scheme": "hospudkobrani",
     "name": "Hospůdkobraní",
     "slug": "hospudkobrani",
-    "version": "1.4.13",
+    "version": "1.4.14",
     "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -21,9 +21,10 @@
         "NSCameraUsageDescription": "Fotit hospůdky!",
         "NSPhotoLibraryUsageDescription": "Přidat fotku z galerie.",
         "ITSAppUsesNonExemptEncryption": false
-      }
-      ,
-      "associatedDomains": ["applinks:hospudkobrani-8888.rostiapp.cz"]
+      },
+      "associatedDomains": [
+        "applinks:hospudkobrani-8888.rostiapp.cz"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -38,8 +39,7 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.RECORD_AUDIO"
-      ]
-      ,
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -50,7 +50,10 @@
               "pathPrefix": "/pub"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -73,7 +76,8 @@
         {
           "RNMapboxMapsVersion": "11.20.1"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

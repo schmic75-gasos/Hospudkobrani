@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.13
+ * Hospůdkobraní – App.js v1.4.14 - experimental
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -21,6 +21,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -202,7 +203,7 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.4.13';
+const APP_VERSION = '1.4.14';
 
 let _telemetryEnabled = true;
 AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) _telemetryEnabled = v !== '0'; }).catch(() => {});
@@ -919,21 +920,12 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
   };
 
   const sharePub = () => {
-    (async () => {
-      try {
-        const res = await apiFetch(`/pubs/${pub.id}/share`);
-        const web = res.web_url || res.url || `https://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`;
-        const appLink = res.app_link || `hospudkobrani://pub/${pub.id}`;
-        // Share web link (recipients without app will see web page); include app link for clients that support it
-        await Share.share({
-          message: `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!\n${web}\n${appLink}`,
-          title: pub.name,
-        });
-      } catch (e) {
-        // fallback
-        Share.share({ message: `https://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`, title: pub.name }).catch(()=>{});
-      }
-    })();
+    const url = `https://hospudkobrani-8888.rostiapp.cz/pub/${pub.id}`;
+    const text = `Podívej se na hospůdku „${pub.name}" v Hospůdkobraní!`;
+    Share.share(
+      Platform.OS === 'ios' ? { url, message: text } : { message: `${text}\n${url}` },
+      { dialogTitle: pub.name }
+    ).catch(() => {});
   };
 
   return (
@@ -1685,14 +1677,14 @@ const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteRead
     ).join('\n');
     const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Hospůdkobraní" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>Trasa Hospůdkobraní</name><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
     try {
-      const uri = `${FileSystem.cacheDirectory}trasa_${Date.now()}.gpx`;
+      const uri = FileSystem.cacheDirectory + `trasa_${Date.now()}.gpx`;
       await FileSystem.writeAsStringAsync(uri, gpxContent, { encoding: FileSystem.EncodingType.UTF8 });
-      try {
-        const Sharing = require('expo-sharing');
-        if (await Sharing.isAvailableAsync()) { await Sharing.shareAsync(uri, { mimeType:'application/gpx+xml', dialogTitle:'Exportovat GPX' }); return; }
-      } catch {}
-      await Share.share({ message: gpxContent, title:'trasa.gpx' });
-    } catch { Alert.alert('Chyba','GPX se nepodařilo exportovat.'); }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/gpx+xml', dialogTitle: 'Exportovat GPX trasy' });
+      } else {
+        Alert.alert('Sdílení nedostupné', 'Toto zařízení nepodporuje sdílení souborů.');
+      }
+    } catch (e) { Alert.alert('Chyba', 'GPX se nepodařilo exportovat: ' + e.message); }
   };
 
   const GH_PROFILES = TRANSPORT_MODES;
@@ -4344,7 +4336,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.13 - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.14 (EXPERIMENTAL) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <GdprInfoModal visible={gdprModalVisible} onClose={() => setGdprModalVisible(false)} />
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
