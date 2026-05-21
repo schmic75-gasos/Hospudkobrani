@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🍺 Hospůdkobraní – Admin</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+/* ── RESET & VARS ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0f0a00;
+  --bg2:      #1a1200;
+  --bg3:      #221900;
+  --amber:    #f5a623;
+  --amber2:   #c07d10;
+  --cream:    #f5ecd7;
+  --dim:      #a89070;
+  --border:   #3d2800;
+  --red:      #c0392b;
+  --green:    #27ae60;
+  --blue:     #2980b9;
+  --gold:     #d4a017;
+  --sidebar:  200px;
+  --radius:   10px;
+  --shadow:   0 4px 20px rgba(0,0,0,.5);
+}
+
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--cream); min-height: 100vh; display: flex; }
+
+/* ── SIDEBAR ────────────────────────────────────────────────────────────────── */
+#sidebar {
+  width: var(--sidebar); min-height: 100vh; background: var(--bg2);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  position: fixed; top: 0; left: 0; z-index: 100;
+}
+.sidebar-logo { padding: 20px 16px 14px; border-bottom: 1px solid var(--border); }
+.sidebar-logo h1 { font-size: 15px; font-weight: 900; color: var(--amber); line-height: 1.3; }
+.sidebar-logo span { font-size: 28px; display: block; margin-bottom: 4px; }
+nav a {
+  display: flex; align-items: center; gap: 9px; padding: 12px 16px;
+  color: var(--dim); text-decoration: none; font-size: 14px; font-weight: 600;
+  border-left: 3px solid transparent; transition: all .15s;
+}
+nav a:hover { color: var(--cream); background: var(--bg3); }
+nav a.active { color: var(--amber); border-left-color: var(--amber); background: rgba(245,166,35,.07); }
+nav a .icon { font-size: 18px; width: 22px; text-align: center; }
+.sidebar-user { margin-top: auto; padding: 14px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--dim); }
+.sidebar-user strong { color: var(--cream); display: block; margin-bottom: 2px; }
+#btn-logout { background: none; border: 1px solid var(--border); color: var(--dim); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-top: 6px; }
+#btn-logout:hover { border-color: var(--red); color: var(--red); }
+
+/* ── MAIN ────────────────────────────────────────────────────────────────────── */
+#main { margin-left: var(--sidebar); flex: 1; padding: 28px; max-width: calc(100vw - var(--sidebar)); }
+.page { display: none; }
+.page.active { display: block; }
+.page-title { font-size: 24px; font-weight: 900; color: var(--amber); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+
+/* ── LOGIN ───────────────────────────────────────────────────────────────────── */
+#login-screen {
+  position: fixed; inset: 0; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; z-index: 999;
+}
+.login-box {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 18px;
+  padding: 36px 32px; width: 360px; text-align: center;
+}
+.login-box .logo { font-size: 52px; margin-bottom: 8px; }
+.login-box h2 { font-size: 22px; font-weight: 900; color: var(--amber); margin-bottom: 4px; }
+.login-box p { color: var(--dim); font-size: 13px; margin-bottom: 24px; }
+
+/* ── FORMS ───────────────────────────────────────────────────────────────────── */
+.form-group { margin-bottom: 14px; }
+.form-group label { display: block; font-size: 12px; color: var(--dim); font-weight: 700; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .5px; }
+input[type=text], input[type=email], input[type=password], input[type=number], textarea, select {
+  width: 100%; padding: 9px 12px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--cream); font-size: 14px; outline: none;
+  transition: border-color .15s;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--amber); }
+textarea { resize: vertical; min-height: 70px; }
+select option { background: var(--bg2); }
+
+/* ── BUTTONS ─────────────────────────────────────────────────────────────────── */
+.btn { padding: 9px 18px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 14px; font-weight: 700; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+.btn-primary   { background: var(--amber); color: var(--bg); }
+.btn-primary:hover { background: var(--amber2); }
+.btn-secondary { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
+.btn-secondary:hover { color: var(--cream); border-color: var(--amber); }
+.btn-danger    { background: transparent; color: var(--red); border: 1px solid var(--red); }
+.btn-danger:hover { background: var(--red); color: #fff; }
+.btn-sm { padding: 5px 11px; font-size: 12px; }
+.btn-icon { padding: 6px 8px; }
+
+/* ── CARDS & TABLES ──────────────────────────────────────────────────────────── */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 18px; }
+.card-title { font-size: 15px; font-weight: 800; color: var(--amber); margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; padding: 10px 12px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+td { padding: 10px 12px; border-bottom: 1px solid rgba(61,40,0,.4); vertical-align: middle; }
+tr:hover td { background: rgba(245,166,35,.04); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; border: 1px solid; }
+.badge-green  { color: var(--green); border-color: var(--green); }
+.badge-red    { color: var(--red); border-color: var(--red); }
+.badge-amber  { color: var(--amber); border-color: var(--amber); }
+.badge-dim    { color: var(--dim); border-color: var(--border); }
+
+/* ── STATS GRID ──────────────────────────────────────────────────────────────── */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.stat-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 18px; text-align: center; }
+.stat-box .num { font-size: 32px; font-weight: 900; color: var(--amber); }
+.stat-box .lbl { font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+/* ── SEARCH BAR ──────────────────────────────────────────────────────────────── */
+.toolbar { display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+.search-input { padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); color: var(--cream); font-size: 14px; outline: none; flex: 1; min-width: 180px; }
+.search-input:focus { border-color: var(--amber); }
+
+/* ── MODAL ───────────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+  z-index: 500; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 18px;
+  padding: 26px; width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.modal-title { font-size: 18px; font-weight: 900; color: var(--amber); }
+.modal-close { background: none; border: none; color: var(--dim); font-size: 22px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.modal-close:hover { color: var(--cream); background: var(--bg3); }
+.modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+/* ── MAP ─────────────────────────────────────────────────────────────────────── */
+#map-picker { height: 320px; border-radius: var(--radius); margin-bottom: 12px; border: 1px solid var(--border); overflow: hidden; }
+.map-hint { font-size: 12px; color: var(--dim); margin-bottom: 12px; padding: 8px 12px; background: var(--bg3); border-radius: 8px; border-left: 3px solid var(--amber); }
+.coords-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ── QUESTIONS ───────────────────────────────────────────────────────────────── */
+.question-block { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.answer-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.answer-row input[type=text] { flex: 1; }
+.answer-row input[type=radio] { accent-color: var(--amber); width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
+.answer-correct-label { font-size: 12px; color: var(--dim); white-space: nowrap; }
+
+/* ── TOAST ───────────────────────────────────────────────────────────────────── */
+#toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 12px 18px; border-radius: var(--radius); font-size: 14px; font-weight: 600; box-shadow: var(--shadow); animation: slideIn .25s ease; max-width: 320px; }
+.toast-success { background: #1a3d1a; border: 1px solid var(--green); color: #7fff7f; }
+.toast-error   { background: #3d1a1a; border: 1px solid var(--red); color: #ff9999; }
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ── MISC ────────────────────────────────────────────────────────────────────── */
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.text-dim { color: var(--dim); font-size: 13px; }
+.text-amber { color: var(--amber); }
+.flex-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--dim); font-size: 15px; gap: 10px; }
+.spinner { width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--amber); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* inactive pub row */
+tr.inactive td { opacity: .45; }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN ─────────────────────────────────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="logo">🍺</div>
+    <h2>Hospůdkobraní</h2>
+    <p>Admin panel – přihlášení</p>
+    <div class="form-group"><label>E-mail</label><input id="login-email" type="email" placeholder="admin@example.cz" autocomplete="username"></div>
+    <div class="form-group"><label>Heslo</label><input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" onclick="doLogin()">Vstoupit</button>
+    <p id="login-error" style="color:var(--red);font-size:13px;margin-top:10px;display:none"></p>
+  </div>
+</div>
+
+<!-- ── SIDEBAR ────────────────────────────────────────────────────────────────── -->
+<div id="sidebar">
+  <div class="sidebar-logo">
+    <span>🍺</span>
+    <h1>Hospůdkobraní<br><span style="font-size:11px;font-weight:600;color:var(--dim)">Admin panel</span></h1>
+  </div>
+  <nav>
+    <a href="#" class="active" data-page="dashboard"><span class="icon">📊</span>Dashboard</a>
+    <a href="#" data-page="pubs"><span class="icon">🏠</span>Hospůdky</a>
+    <a href="#" data-page="challenges"><span class="icon">🎯</span>Výzvy</a>
+    <a href="#" data-page="users"><span class="icon">👥</span>Uživatelé</a>
+    <a href="#" data-page="reports"><span class="icon">⚠️</span>Nahlášení</a>
+    <a href="#" data-page="suggestions"><span class="icon">💡</span>Návrhy</a>
+  </nav>
+  <div class="sidebar-user">
+    <strong id="sidebar-username">–</strong>
+    <span id="sidebar-email" style="font-size:11px"></span>
+    <button id="btn-logout" onclick="logout()">Odhlásit se</button>
+  </div>
+</div>
+
+<!-- ── MAIN ───────────────────────────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- DASHBOARD -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-title">📊 Dashboard</div>
+    <div id="stats-grid" class="stats-grid">
+      <div class="loading"><div class="spinner"></div>Načítám…</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Rychlé akce</div>
+      <div class="flex-row">
+        <button class="btn btn-primary" onclick="nav('pubs');openPubModal()">＋ Přidat hospůdku</button>
+        <button class="btn btn-secondary" onclick="nav('challenges');openChallengeModal()">＋ Přidat výzvu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOSPŮDKY -->
+  <div class="page" id="page-pubs">
+    <div class="page-title">🏠 Hospůdky
+      <button class="btn btn-primary btn-sm" onclick="openPubModal()">＋ Přidat hospůdku</button>
+    </div>
+    <div class="toolbar">
+      <input class="search-input" id="pub-search" placeholder="Hledat podle názvu nebo adresy…" oninput="filterPubs()">
+      <select id="pub-filter-type" style="width:160px" onchange="filterPubs()">
+        <option value="">Všechny typy</option>
+        <option>hospoda</option><option>restaurace</option>
+        <option>hostinec</option><option>kiosek</option><option>jiné</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim);cursor:pointer">
+        <input type="checkbox" id="show-inactive" onchange="filterPubs()" style="accent-color:var(--amber)"> Zobrazit skryté
+      </label>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr>
+          <th>Název</th><th>Typ</th><th>Adresa</th>
+          <th>Piva</th><th>Karty</th><th style="text-align:center">Návštěv</th>
+          <th style="text-align:center">Hodnocení</th><th>Stav</th><th>Akce</th>
+        </tr></thead>
+        <tbody id="pubs-tbody"><tr><td colspan="9" class="loading"><div class="spinner"></div>Načítám…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- VÝZVY -->
+  <div class="page" id="page-challenges">
+    <div class="page-title">🎯 Výzvy
+      <button class="btn btn-primary btn-sm" onclick="openChallengeModal()">＋ Přidat výzvu</button>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr>
+          <th>Ikona</th><th>Název</th><th>Typ</th><th>Cíl</th>
+          <th>Filtr</th><th>Odměna</th><th>Pořadí</th><th>Stav</th><th>Akce</th>
+        </tr></thead>
+        <tbody id="challenges-tbody"><tr><td colspan="9" class="loading"><div class="spinner"></div>Načítám…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- UŽIVATELÉ -->
+  <div class="page" id="page-users">
+    <div class="page-title">👥 Uživatelé</div>
+    <div class="toolbar">
+      <input class="search-input" id="user-search" placeholder="Hledat podle nicku nebo e-mailu…" oninput="filterUsers()">
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr>
+          <th>Nick</th><th>E-mail</th><th>Návštěv</th>
+          <th>Registrace</th><th>Poslední přihlášení</th><th>Admin</th><th>Stav</th><th>Akce</th>
+        </tr></thead>
+        <tbody id="users-tbody"><tr><td colspan="8" class="loading"><div class="spinner"></div>Načítám…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- NAHLÁŠENÍ -->
+  <div class="page" id="page-reports">
+    <div class="page-title">⚠️ Nahlášení chyb</div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>Hospůdka</th><th>Uživatel</th><th>Důvod / detail</th><th>Datum</th><th>Akce</th></tr></thead>
+        <tbody id="reports-tbody"><tr><td colspan="5" class="loading"><div class="spinner"></div>Načítám…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- NÁVRHY -->
+  <div class="page" id="page-suggestions">
+    <div class="page-title">💡 Návrhy nových hospůdek</div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>Navrhovatel</th><th>Název</th><th>Typ</th><th>Adresa / pozn.</th><th>Souřadnice</th><th>Datum</th><th>Akce</th></tr></thead>
+        <tbody id="suggestions-tbody"><tr><td colspan="7" class="loading"><div class="spinner"></div>Načítám…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ══ MODAL: HOSPŮDKA ════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="pub-modal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <div class="modal-title" id="pub-modal-title">Přidat hospůdku</div>
+      <button class="modal-close" onclick="closeModal('pub-modal')">✕</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Název *</label>
+        <input type="text" id="pub-name" placeholder="U Zlatého Jelena">
+      </div>
+      <div class="form-group">
+        <label>Typ *</label>
+        <select id="pub-type">
+          <option>hospoda</option><option>restaurace</option>
+          <option>hostinec</option><option>kiosek</option><option>jiné</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Adresa</label>
+        <input type="text" id="pub-address" placeholder="Náměstí 1, Plzeň">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Otevírací doba</label>
+        <input type="text" id="pub-hours" placeholder="Po–Pá 15:00–23:00, So–Ne 12:00–23:00">
+      </div>
+      <div class="form-group">
+        <label>Telefonní číslo</label>
+        <input type="text" id="pub-phone" placeholder="+420 123 456 789">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Točená piva (odděleno čárkou)</label>
+        <input type="text" id="pub-beers" placeholder="Pilsner Urquell, Gambrinus, Bernard">
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="pub-card" style="accent-color:var(--amber);width:16px;height:16px">
+          Platba kartou
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="pub-active" checked style="accent-color:var(--amber);width:16px;height:16px">
+          Aktivní (viditelná v appce)
+        </label>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Poznámka / Upozornění</label>
+        <textarea id="pub-note" placeholder="Jen hotovost, pes povolen, platba pouze v pátek…"></textarea>
+      </div>
+    </div>
+
+    <hr class="divider">
+    <div class="map-hint">📍 Klikni na mapu pro výběr polohy hospůdky. Nebo zadej adresu výše a stiskni <strong>Hledat na mapě</strong>.</div>
+    <div class="flex-row" style="margin-bottom:10px">
+      <button class="btn btn-secondary btn-sm" onclick="geocodeAddress()">🔍 Hledat na mapě</button>
+      <span class="text-dim" id="geocode-status"></span>
+    </div>
+    <div id="map-picker"></div>
+    <div class="coords-row">
+      <div class="form-group">
+        <label>Zeměpisná šířka (lat) *</label>
+        <input type="number" id="pub-lat" step="0.0000001" placeholder="49.7384">
+      </div>
+      <div class="form-group">
+        <label>Zeměpisná délka (lon) *</label>
+        <input type="number" id="pub-lon" step="0.0000001" placeholder="13.3736">
+      </div>
+    </div>
+
+    <hr class="divider">
+    <!-- OTÁZKY -->
+    <div class="card-title" style="margin-bottom:12px">
+      Ověřovací otázky
+      <button class="btn btn-secondary btn-sm" onclick="addQuestionBlock()">＋ Přidat otázku</button>
+    </div>
+    <div id="questions-container"></div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('pub-modal')">Zrušit</button>
+      <button class="btn btn-primary" onclick="savePub()">💾 Uložit hospůdku</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: VÝZVA ═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="challenge-modal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <div class="modal-title" id="challenge-modal-title">Přidat výzvu</div>
+      <button class="modal-close" onclick="closeModal('challenge-modal')">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:60px 1fr;gap:14px">
+      <div class="form-group">
+        <label>Ikona</label>
+        <input type="text" id="c-icon" value="🎯" style="font-size:22px;text-align:center">
+      </div>
+      <div class="form-group">
+        <label>Název *</label>
+        <input type="text" id="c-name" placeholder="Desítka">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Popis</label>
+      <textarea id="c-desc" placeholder="Navštiv 10 různých hospůdek"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="form-group">
+        <label>Typ výzvy *</label>
+        <select id="c-type" onchange="challengeTypeChanged()">
+          <option value="total_visits">Unikátní hospůdky celkem</option>
+          <option value="visit_count_any">Logy celkem (i opakované)</option>
+          <option value="pub_type">Typ hospůdky</option>
+          <option value="beer_brand">Točené pivo</option>
+          <option value="rating_5">Hodnocení 5 hvězd</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Cíl (počet) *</label>
+        <input type="number" id="c-target" value="10" min="1">
+      </div>
+    </div>
+    <div class="form-group" id="c-filter-group">
+      <label id="c-filter-label">Hodnota filtru</label>
+      <input type="text" id="c-filter" placeholder="např. hospoda / Pilsner Urquell">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="form-group">
+        <label>Odměna (volitelné)</label>
+        <input type="text" id="c-reward" placeholder="Titul Hospodský Bůh">
+      </div>
+      <div class="form-group">
+        <label>Pořadí (sort)</label>
+        <input type="number" id="c-order" value="0" min="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="c-active" checked style="accent-color:var(--amber);width:16px;height:16px">
+        Aktivní
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('challenge-modal')">Zrušit</button>
+      <button class="btn btn-primary" onclick="saveChallenge()">💾 Uložit výzvu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TOAST ═══════════════════════════════════════════════════════════════════ -->
+<div id="toast-container"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════════════════
+const API = 'https://hospudkobrani-8888.rostiapp.cz/api';
+let token = localStorage.getItem('admin_token') || null;
+let currentUser = null;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  $('toast-container').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+async function api(endpoint, opts = {}) {
+  const res = await fetch(API + endpoint, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...opts.headers },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+  return data;
+}
+
+function nav(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  $('page-' + page).classList.add('active');
+  document.querySelector(`nav a[data-page="${page}"]`).classList.add('active');
+  if (page === 'dashboard') loadDashboard();
+  if (page === 'pubs')       loadPubs();
+  if (page === 'challenges') loadChallenges();
+  if (page === 'users')      loadUsers();
+  if (page === 'reports')    loadReports();
+  if (page === 'suggestions') loadSuggestions();
+}
+
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => { e.preventDefault(); nav(a.dataset.page); });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════════════════════════════════════════
+async function doLogin() {
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
+  $('login-error').style.display = 'none';
+  try {
+    const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    token = data.token;
+    localStorage.setItem('admin_token', token);
+    currentUser = data.user;
+    await checkAdmin();
+  } catch (e) {
+    $('login-error').textContent = e.message;
+    $('login-error').style.display = 'block';
+  }
+}
+
+async function checkAdmin() {
+  try {
+    const me = await api('/auth/me');
+    await api('/admin/stats');
+    currentUser = me;
+    $('login-screen').style.display = 'none';
+    $('sidebar-username').textContent = me.username;
+    $('sidebar-email').textContent = me.email;
+    nav('dashboard');
+  } catch (e) {
+    token = null;
+    localStorage.removeItem('admin_token');
+    $('login-error').textContent = 'Nemáš admin oprávnění nebo relace vypršela.';
+    $('login-error').style.display = 'block';
+    $('login-screen').style.display = 'flex';
+  }
+}
+
+function logout() {
+  token = null;
+  localStorage.removeItem('admin_token');
+  location.reload();
+}
+
+$('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+if (token) checkAdmin();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadDashboard() {
+  const grid = $('stats-grid');
+  grid.innerHTML = '<div class="loading"><div class="spinner"></div>Načítám…</div>';
+  try {
+    const s = await api('/admin/stats');
+    const items = [
+      ['🏠', s.total_pubs,   'Aktivních hospůdek'],
+      ['👥', s.total_users,  'Registrovaných userů'],
+      ['🍺', s.total_visits, 'Celkem odkliknutí'],
+      ['📅', s.visits_today, 'Dnes'],
+      ['📈', s.visits_week,  'Posledních 7 dní'],
+      ['📷', s.photos_total, 'Nahraných fotek'],
+    ];
+    grid.innerHTML = items.map(([icon, num, lbl]) =>
+      `<div class="stat-box"><div style="font-size:28px">${icon}</div><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`
+    ).join('');
+  } catch (e) { grid.innerHTML = `<p style="color:var(--red)">${e.message}</p>`; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HOSPŮDKY
+// ═══════════════════════════════════════════════════════════════════════════════
+let allPubs = [];
+let editingPubId = null;
+let mapPicker = null;
+let mapMarker = null;
+let existingQData = [];
+
+async function loadPubs() {
+  $('pubs-tbody').innerHTML = '<tr><td colspan="9" class="loading"><div class="spinner"></div>Načítám…</td></tr>';
+  try {
+    allPubs = await api('/admin/pubs');
+    renderPubs(allPubs);
+  } catch (e) { $('pubs-tbody').innerHTML = `<tr><td colspan="9" style="color:var(--red);padding:20px">${e.message}</td></tr>`; }
+}
+
+function renderPubs(list) {
+  if (!list.length) { $('pubs-tbody').innerHTML = '<tr><td colspan="9" style="color:var(--dim);padding:20px;text-align:center">Žádné hospůdky</td></tr>'; return; }
+  $('pubs-tbody').innerHTML = list.map(p => `
+    <tr class="${p.active ? '' : 'inactive'}" id="pub-row-${p.id}">
+      <td><strong style="color:var(--cream)">${esc(p.name)}</strong></td>
+      <td><span class="badge badge-amber">${esc(p.type)}</span></td>
+      <td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.address||'–')}</td>
+      <td style="max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)">${esc(p.beers||'–')}</td>
+      <td style="text-align:center">${p.card_payment ? '<span class="badge badge-green">✓</span>' : '<span class="badge badge-dim">✗</span>'}</td>
+      <td style="text-align:center;color:var(--amber);font-weight:700">${p.visit_count}</td>
+      <td style="text-align:center">${p.avg_rating > 0 ? `⭐ ${p.avg_rating}` : '<span class="text-dim">–</span>'}</td>
+      <td>${p.active ? '<span class="badge badge-green">Aktivní</span>' : '<span class="badge badge-red">Skrytá</span>'}</td>
+      <td>
+        <div class="flex-row">
+          <button class="btn btn-secondary btn-sm btn-icon" title="Upravit" onclick="openPubModal(${p.id})">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" title="${p.active?'Skrýt':'Obnovit'}" onclick="togglePub(${p.id},${p.active})">${p.active?'🚫':'✅'}</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function filterPubs() {
+  const q = $('pub-search').value.toLowerCase();
+  const type = $('pub-filter-type').value;
+  const showInactive = $('show-inactive').checked;
+  const filtered = allPubs.filter(p => {
+    if (!showInactive && !p.active) return false;
+    if (type && p.type !== type) return false;
+    if (q && !p.name.toLowerCase().includes(q) && !(p.address||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  renderPubs(filtered);
+}
+
+async function togglePub(id, currentActive) {
+  const pub = allPubs.find(p => p.id === id);
+  if (!pub) return;
+  try {
+    await api(`/admin/pubs/${id}`, { method: 'PUT', body: JSON.stringify({ ...pub, active: !currentActive }) });
+    toast(currentActive ? 'Hospůdka skryta' : 'Hospůdka obnovena');
+    loadPubs();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function openPubModal(pubId = null) {
+  editingPubId = pubId;
+  existingQData = [];
+  $('pub-modal-title').textContent = pubId ? 'Upravit hospůdku' : 'Přidat hospůdku';
+  $('pub-name').value = '';
+  $('pub-type').value = 'hospoda';
+  $('pub-address').value = '';
+  $('pub-hours').value = '';
+  $('pub-beers').value = '';
+  $('pub-card').checked = false;
+  $('pub-active').checked = true;
+  $('pub-note').value = '';
+  $('pub-phone').value = '';
+  $('pub-lat').value = '';
+  $('pub-lon').value = '';
+  $('questions-container').innerHTML = '';
+  $('geocode-status').textContent = '';
+  $('pub-modal').classList.add('open');
+
+  setTimeout(() => initMapPicker(49.7384, 13.3736, false), 50);
+
+  if (pubId) {
+    const pub = allPubs.find(p => p.id === pubId);
+    if (pub) {
+      $('pub-name').value = pub.name || '';
+      $('pub-type').value = pub.type || 'hospoda';
+      $('pub-address').value = pub.address || '';
+      $('pub-hours').value = pub.opening_hours || '';
+      $('pub-beers').value = pub.beers || '';
+      $('pub-card').checked = pub.card_payment;
+      $('pub-active').checked = pub.active;
+      $('pub-note').value = pub.note || '';
+      $('pub-phone').value = pub.phone || '';
+      $('pub-lat').value = pub.latitude;
+      $('pub-lon').value = pub.longitude;
+      setTimeout(() => setMapMarker(pub.latitude, pub.longitude, true), 100);
+    }
+    try {
+      existingQData = await api(`/admin/pubs/${pubId}/questions`);
+      existingQData.forEach(q => addQuestionBlock(q));
+    } catch {}
+  }
+}
+
+function initMapPicker(lat, lon, setMarker) {
+  if (mapPicker) { mapPicker.remove(); mapPicker = null; mapMarker = null; }
+  mapPicker = L.map('map-picker').setView([lat, lon], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapPicker);
+  mapPicker.on('click', e => setMapMarker(e.latlng.lat, e.latlng.lng, false));
+  if (setMarker) setMapMarker(lat, lon, false);
+}
+
+function setMapMarker(lat, lon, pan) {
+  $('pub-lat').value = parseFloat(lat).toFixed(7);
+  $('pub-lon').value = parseFloat(lon).toFixed(7);
+  if (mapMarker) mapPicker.removeLayer(mapMarker);
+  const icon = L.divIcon({ className: '', html: '<div style="font-size:28px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))">🍺</div>', iconSize: [30, 30], iconAnchor: [15, 28] });
+  mapMarker = L.marker([lat, lon], { icon }).addTo(mapPicker);
+  if (pan) mapPicker.setView([lat, lon], 15);
+}
+
+async function geocodeAddress() {
+  const addr = $('pub-address').value.trim();
+  if (!addr) { toast('Zadej adresu', 'error'); return; }
+  $('geocode-status').textContent = '⏳ Hledám…';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`, { headers: { 'Accept-Language': 'cs' } });
+    const d = await r.json();
+    if (!d.length) { $('geocode-status').textContent = '❌ Adresa nenalezena'; return; }
+    const { lat, lon, display_name } = d[0];
+    setMapMarker(parseFloat(lat), parseFloat(lon), true);
+    $('geocode-status').textContent = `✅ ${display_name.substring(0, 60)}…`;
+  } catch { $('geocode-status').textContent = '❌ Chyba geocodingu'; }
+}
+
+let qBlockCount = 0;
+
+function addQuestionBlock(data = null) {
+  const idx = qBlockCount++;
+  const qText = data ? esc(data.question_text) : '';
+  const active = data ? data.active : true;
+  const qId = data ? data.id : null;
+  const answers = data ? data.answers : [{ answer_text: '', is_correct: true }, { answer_text: '', is_correct: false }];
+
+  const el = document.createElement('div');
+  el.className = 'question-block';
+  el.dataset.qid = qId || '';
+  el.id = `qblock-${idx}`;
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <strong style="color:var(--amber);font-size:13px">Otázka ${idx + 1}</strong>
+      <div class="flex-row">
+        <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" ${active ? 'checked' : ''} class="q-active" style="accent-color:var(--amber)"> Aktivní
+        </label>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="removeQBlock('qblock-${idx}')">🗑</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Text otázky *</label>
+      <input type="text" class="q-text" value="${qText}" placeholder="Jaká značka piva se točí u baru?">
+    </div>
+    <div class="answers-container" id="answers-${idx}">
+      ${answers.map((a, ai) => answerRow(idx, ai, a.answer_text, a.is_correct, a.id)).join('')}
+    </div>
+    <button class="btn btn-secondary btn-sm mt-8" onclick="addAnswerRow(${idx})">＋ Přidat odpověď</button>
+  `;
+  $('questions-container').appendChild(el);
+}
+
+function answerRow(qIdx, aIdx, text = '', correct = false, aid = null) {
+  return `
+    <div class="answer-row" id="arow-${qIdx}-${aIdx}" data-aid="${aid || ''}">
+      <input type="radio" name="correct-${qIdx}" ${correct ? 'checked' : ''} title="Správná odpověď">
+      <span class="answer-correct-label">✓ správná</span>
+      <input type="text" value="${esc(text)}" placeholder="Text odpovědi…">
+      <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.answer-row').remove()" title="Odebrat">✕</button>
+    </div>`;
+}
+
+function addAnswerRow(qIdx) {
+  const container = $(`answers-${qIdx}`);
+  const aIdx = container.querySelectorAll('.answer-row').length;
+  const div = document.createElement('div');
+  div.innerHTML = answerRow(qIdx, aIdx);
+  container.appendChild(div.firstElementChild);
+}
+
+function removeQBlock(id) { $(id)?.remove(); }
+
+async function savePub() {
+  const name = $('pub-name').value.trim();
+  const lat  = parseFloat($('pub-lat').value);
+  const lon  = parseFloat($('pub-lon').value);
+  if (!name) { toast('Vyplň název hospůdky', 'error'); return; }
+  if (isNaN(lat) || isNaN(lon)) { toast('Vyber polohu na mapě', 'error'); return; }
+
+  const pubData = {
+    name, type: $('pub-type').value,
+    latitude: lat, longitude: lon,
+    address: $('pub-address').value.trim() || null,
+    opening_hours: $('pub-hours').value.trim() || null,
+    beers: $('pub-beers').value.trim() || null,
+    card_payment: $('pub-card').checked,
+    active: $('pub-active').checked,
+    note: $('pub-note').value.trim() || null,
+    phone: $('pub-phone').value.trim() || null,
+  };
+
+  try {
+    let pubId = editingPubId;
+    if (pubId) {
+      await api(`/admin/pubs/${pubId}`, { method: 'PUT', body: JSON.stringify(pubData) });
+      toast('Hospůdka aktualizována ✅');
+    } else {
+      const res = await api('/admin/pubs', { method: 'POST', body: JSON.stringify(pubData) });
+      pubId = res.id;
+      toast('Hospůdka přidána ✅');
+    }
+
+    const qBlocks = document.querySelectorAll('#questions-container .question-block');
+    for (const block of qBlocks) {
+      const qid = block.dataset.qid ? parseInt(block.dataset.qid) : null;
+      const qText = block.querySelector('.q-text').value.trim();
+      const qActive = block.querySelector('.q-active').checked;
+      if (!qText) continue;
+      const answerRows = block.querySelectorAll('.answer-row');
+      const answers = [];
+      let hasCorrect = false;
+      answerRows.forEach(row => {
+        const radio = row.querySelector('input[type=radio]');
+        const text  = row.querySelector('input[type=text]').value.trim();
+        if (!text) return;
+        const isCorrect = radio.checked;
+        if (isCorrect) hasCorrect = true;
+        answers.push({ answer_text: text, is_correct: isCorrect });
+      });
+      if (!answers.length) continue;
+      if (!hasCorrect) { toast(`Otázka „${qText.substring(0,30)}" nemá správnou odpověď`, 'error'); continue; }
+      const qPayload = { question_text: qText, active: qActive, answers };
+      if (qid) {
+        await api(`/admin/questions/${qid}`, { method: 'PUT', body: JSON.stringify(qPayload) });
+      } else {
+        await api(`/admin/pubs/${pubId}/questions`, { method: 'POST', body: JSON.stringify(qPayload) });
+      }
+    }
+
+    closeModal('pub-modal');
+    loadPubs();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VÝZVY
+// ═══════════════════════════════════════════════════════════════════════════════
+let allChallenges = [];
+let editingChallengeId = null;
+
+async function loadChallenges() {
+  $('challenges-tbody').innerHTML = '<tr><td colspan="9" class="loading"><div class="spinner"></div>Načítám…</td></tr>';
+  try {
+    allChallenges = await api('/admin/challenges');
+    renderChallenges();
+  } catch (e) { $('challenges-tbody').innerHTML = `<tr><td colspan="9" style="color:var(--red);padding:20px">${e.message}</td></tr>`; }
+}
+
+function renderChallenges() {
+  if (!allChallenges.length) { $('challenges-tbody').innerHTML = '<tr><td colspan="9" style="color:var(--dim);padding:20px;text-align:center">Žádné výzvy</td></tr>'; return; }
+  const typeLabels = { total_visits:'Unikátní hospůdky', visit_count_any:'Všechny logy', pub_type:'Typ podniku', beer_brand:'Pivo', rating_5:'5 hvězd' };
+  $('challenges-tbody').innerHTML = allChallenges.map(c => `
+    <tr>
+      <td style="font-size:22px;text-align:center">${c.icon||'🎯'}</td>
+      <td><strong style="color:var(--cream)">${esc(c.name)}</strong><br><span class="text-dim" style="font-size:12px">${esc(c.description||'')}</span></td>
+      <td><span class="badge badge-amber">${typeLabels[c.challenge_type]||c.challenge_type}</span></td>
+      <td style="text-align:center;font-weight:700;color:var(--amber)">${c.target}</td>
+      <td style="color:var(--dim)">${esc(c.filter_value||'–')}</td>
+      <td>${esc(c.reward||'–')}</td>
+      <td style="text-align:center">${c.sort_order}</td>
+      <td>${c.active ? '<span class="badge badge-green">Aktivní</span>' : '<span class="badge badge-red">Neaktivní</span>'}</td>
+      <td>
+        <div class="flex-row">
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="openChallengeModal(${c.id})" title="Upravit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteChallenge(${c.id})" title="Smazat">🗑</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function openChallengeModal(cid = null) {
+  editingChallengeId = cid;
+  $('challenge-modal-title').textContent = cid ? 'Upravit výzvu' : 'Přidat výzvu';
+  const c = cid ? allChallenges.find(x => x.id === cid) : null;
+  $('c-icon').value    = c?.icon || '🎯';
+  $('c-name').value    = c?.name || '';
+  $('c-desc').value    = c?.description || '';
+  $('c-type').value    = c?.challenge_type || 'total_visits';
+  $('c-target').value  = c?.target || 10;
+  $('c-filter').value  = c?.filter_value || '';
+  $('c-reward').value  = c?.reward || '';
+  $('c-order').value   = c?.sort_order ?? 0;
+  $('c-active').checked = c ? c.active : true;
+  challengeTypeChanged();
+  $('challenge-modal').classList.add('open');
+}
+
+function challengeTypeChanged() {
+  const t = $('c-type').value;
+  const needsFilter = ['pub_type','beer_brand'].includes(t);
+  $('c-filter-group').style.display = needsFilter ? 'block' : 'none';
+  if (t === 'pub_type') $('c-filter-label').textContent = 'Typ podniku (hospoda / restaurace …)';
+  if (t === 'beer_brand') $('c-filter-label').textContent = 'Název piva (např. Pilsner Urquell)';
+}
+
+async function saveChallenge() {
+  const name = $('c-name').value.trim();
+  if (!name) { toast('Vyplň název výzvy', 'error'); return; }
+  const payload = {
+    name, description: $('c-desc').value.trim() || null,
+    icon: $('c-icon').value.trim() || '🎯',
+    challenge_type: $('c-type').value,
+    filter_value: $('c-filter').value.trim() || null,
+    target: parseInt($('c-target').value) || 1,
+    reward: $('c-reward').value.trim() || null,
+    sort_order: parseInt($('c-order').value) || 0,
+    active: $('c-active').checked,
+  };
+  try {
+    if (editingChallengeId) {
+      await api(`/admin/challenges/${editingChallengeId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      toast('Výzva aktualizována ✅');
+    } else {
+      await api('/admin/challenges', { method: 'POST', body: JSON.stringify(payload) });
+      toast('Výzva přidána ✅');
+    }
+    closeModal('challenge-modal');
+    loadChallenges();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteChallenge(id) {
+  if (!confirm('Opravdu smazat tuto výzvu?')) return;
+  try {
+    await api(`/admin/challenges/${id}`, { method: 'DELETE' });
+    toast('Výzva smazána');
+    loadChallenges();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UŽIVATELÉ
+// ═══════════════════════════════════════════════════════════════════════════════
+let allUsers = [];
+
+async function loadUsers() {
+  $('users-tbody').innerHTML = '<tr><td colspan="8" class="loading"><div class="spinner"></div>Načítám…</td></tr>';
+  try {
+    allUsers = await api('/admin/users');
+    renderUsers(allUsers);
+  } catch (e) { $('users-tbody').innerHTML = `<tr><td colspan="8" style="color:var(--red);padding:20px">${e.message}</td></tr>`; }
+}
+
+function renderUsers(list) {
+  if (!list.length) { $('users-tbody').innerHTML = '<tr><td colspan="8" style="color:var(--dim);padding:20px;text-align:center">Žádní uživatelé</td></tr>'; return; }
+  $('users-tbody').innerHTML = list.map(u => `
+    <tr>
+      <td><strong style="color:var(--cream)">${esc(u.username)}</strong></td>
+      <td style="color:var(--dim)">${esc(u.email)}</td>
+      <td style="text-align:center;color:var(--amber);font-weight:700">${u.visit_count}</td>
+      <td style="color:var(--dim)">${fmtDate(u.created_at)}</td>
+      <td style="color:var(--dim)">${fmtDate(u.last_login) || '–'}</td>
+      <td style="text-align:center">${u.is_admin ? '<span class="badge badge-amber">✓ Admin</span>' : '<span class="badge badge-dim">–</span>'}</td>
+      <td>${u.active ? '<span class="badge badge-green">Aktivní</span>' : '<span class="badge badge-red">Blokovaný</span>'}</td>
+      <td>
+        <div class="flex-row">
+          <button class="btn btn-secondary btn-sm" onclick="toggleAdmin(${u.id},${u.is_admin})">${u.is_admin ? '⬇ Odebrat admin' : '⬆ Udělat admin'}</button>
+          <button class="btn btn-${u.active?'danger':'secondary'} btn-sm btn-icon" onclick="toggleUserActive(${u.id},${u.active})" title="${u.active?'Blokovat':'Odblokovat'}">${u.active?'🚫':'✅'}</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function filterUsers() {
+  const q = $('user-search').value.toLowerCase();
+  const filtered = allUsers.filter(u => u.username.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  renderUsers(filtered);
+}
+
+async function toggleAdmin(uid, isAdmin) {
+  const u = allUsers.find(x => x.id === uid);
+  if (!u) return;
+  if (!confirm(isAdmin ? `Odebrat admin u ${u.username}?` : `Udělit admin ${u.username}?`)) return;
+  try {
+    await api(`/admin/users/${uid}`, { method: 'PUT', body: JSON.stringify({ is_admin: !isAdmin, active: u.active }) });
+    toast(isAdmin ? 'Admin odebrán' : 'Admin udělen');
+    loadUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function toggleUserActive(uid, isActive) {
+  const u = allUsers.find(x => x.id === uid);
+  if (!u) return;
+  if (isActive && !confirm(`Blokovat uživatele ${u.username}?`)) return;
+  try {
+    await api(`/admin/users/${uid}`, { method: 'PUT', body: JSON.stringify({ is_admin: u.is_admin, active: !isActive }) });
+    toast(isActive ? 'Uživatel blokován' : 'Uživatel odblokován');
+    loadUsers();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NAHLÁŠENÍ
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadReports() {
+  const tbody = $('reports-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="loading"><div class="spinner"></div>Načítám…</td></tr>';
+  try {
+    const reports = await api('/admin/reports');
+    if (!reports.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--dim);padding:20px;text-align:center">Žádná nevyřešená nahlášení</td></tr>';
+      return;
+    }
+    tbody.innerHTML = reports.map(r => `
+      <tr>
+        <td><strong>${esc(r.pub_name)}</strong><br><span class="text-dim">ID ${r.pub_id}</span></td>
+        <td>${esc(r.username)}</td>
+        <td><strong>${esc(r.reason)}</strong><br><span class="text-dim">${esc(r.detail||'')}</span></td>
+        <td>${new Date(r.created_at).toLocaleString()}</td>
+        <td>
+          <div class="flex-row">
+            <button class="btn btn-primary btn-sm" onclick="editPubFromReport(${r.pub_id})">✏️ Upravit hospůdku</button>
+            <button class="btn btn-secondary btn-sm" onclick="resolveReport(${r.id})">✅ Vyřešeno</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--red);padding:20px">${e.message}</td></tr>`;
+  }
+}
+
+async function resolveReport(id) {
+  try {
+    await api(`/admin/reports/${id}`, { method: 'PUT' });
+    toast('Nahlášení označeno jako vyřešené');
+    loadReports();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function editPubFromReport(pubId) {
+  nav('pubs');
+  setTimeout(() => openPubModal(pubId), 200);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NÁVRHY
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadSuggestions() {
+  const tbody = $('suggestions-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" class="loading"><div class="spinner"></div>Načítám…</td></tr>';
+  try {
+    const suggestions = await api('/admin/suggestions');
+    if (!suggestions.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--dim);padding:20px;text-align:center">Žádné čekající návrhy</td></tr>';
+      return;
+    }
+    tbody.innerHTML = suggestions.map(s => `
+      <tr>
+        <td>${esc(s.username)}</td>
+        <td><strong>${esc(s.name)}</strong></td>
+        <td><span class="badge badge-amber">${esc(s.type)}</span></td>
+        <td>${esc(s.address||'')}<br><span class="text-dim">${esc(s.note||'')}</span></td>
+        <td>${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}</td>
+        <td>${new Date(s.created_at).toLocaleString()}</td>
+        <td>
+          <div class="flex-row">
+            <button class="btn btn-primary btn-sm" onclick="approveSuggestion(${s.id})">✅ Schválit</button>
+            <button class="btn btn-danger btn-sm" onclick="rejectSuggestion(${s.id})">❌ Zamítnout</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--red);padding:20px">${e.message}</td></tr>`;
+  }
+}
+
+async function approveSuggestion(id) {
+  try {
+    await api(`/admin/suggestions/${id}`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) });
+    toast('Návrh schválen a hospůdka přidána na mapu ✅');
+    loadSuggestions();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function rejectSuggestion(id) {
+  if (!confirm('Opravdu zamítnout tento návrh?')) return;
+  try {
+    await api(`/admin/suggestions/${id}`, { method: 'PUT', body: JSON.stringify({ status: 'rejected' }) });
+    toast('Návrh zamítnut');
+    loadSuggestions();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function closeModal(id) {
+  $(id).classList.remove('open');
+  if (id === 'pub-modal' && mapPicker) { mapPicker.remove(); mapPicker = null; mapMarker = null; }
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtDate(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString('cs-CZ');
+}
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.open').forEach(m => closeModal(m.id));
+  }
+});
+</script>
+</body>
+</html>

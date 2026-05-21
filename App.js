@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.5.0
+ * Hospůdkobraní – App.js v1.5.1
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -595,7 +595,7 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate, pubId 
         <TouchableOpacity style={s.pvClose} onPress={close}>
           <Ionicons name="close" size={26} color={C.white} />
         </TouchableOpacity>
-        {(currentPhoto?.pub_id || pubId) && (
+        {currentPhoto?.id && (
           <TouchableOpacity
             style={[s.pvClose, {right: undefined, left: 20}]}
             onPress={() => setReportMod(true)}
@@ -608,7 +608,6 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate, pubId 
       {reportMod && (
         <ReportPhotoModal
           photo={currentPhoto}
-          pubId={currentPhoto?.pub_id || pubId}
           onClose={() => setReportMod(false)}
         />
       )}
@@ -1013,6 +1012,14 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
                 <Ionicons name="navigate-outline" size={14} color={C.teal}/>
                 <Text style={[s.dimText,{color:C.teal,textDecorationLine:'underline',flex:1}]}>{pub.address}</Text>
                 <Ionicons name="open-outline" size={12} color={C.teal}/>
+              </TouchableOpacity>
+            )}
+            {pub.phone && (
+              <TouchableOpacity style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:6}} activeOpacity={0.7}
+                onPress={()=>Linking.openURL(`tel:${pub.phone.replace(/\s/g,'')}`)}
+              >
+                <Ionicons name="call-outline" size={14} color={C.green}/>
+                <Text style={[s.dimText,{color:C.green,textDecorationLine:'underline',flex:1}]}>{pub.phone}</Text>
               </TouchableOpacity>
             )}
             {pub.opening_hours && (
@@ -1561,6 +1568,76 @@ const SuggestPubModal = ({ lat, lng, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PŘIDAT HOSPŮDKU MODAL (pouze admin)
+// ══════════════════════════════════════════════════════════════════════════════
+const AddPubModal = ({ lat, lng, onClose, onAdded }) => {
+  const [name, setName]         = useState('');
+  const [type, setType]         = useState('hospoda');
+  const [address, setAddress]   = useState('');
+  const [hours, setHours]       = useState('');
+  const [phone, setPhone]       = useState('');
+  const [beers, setBeers]       = useState('');
+  const [card, setCard]         = useState(false);
+  const [note, setNote]         = useState('');
+  const [busy, setBusy]         = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) { Alert.alert('Zadej název!'); return; }
+    setBusy(true);
+    try {
+      await apiFetch('/admin/pubs', { method: 'POST', body: JSON.stringify({
+        name, type, address: address || null, opening_hours: hours || null,
+        phone: phone || null, beers: beers || null, card_payment: card,
+        note: note || null, latitude: lat, longitude: lng,
+      })});
+      Alert.alert('Hotovo!', 'Hospůdka byla přidána přímo na mapu.');
+      onAdded?.();
+      onClose();
+    } catch(e) { Alert.alert('Chyba', e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Přidat hospůdku</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <Text style={[s.dimText,{marginBottom:12}]}>📍 {lat?.toFixed(5)}, {lng?.toFixed(5)}</Text>
+              <TextInput style={s.input} placeholder="Název podniku *" placeholderTextColor={C.creamDim} value={name} onChangeText={setName}/>
+              <Text style={s.secLabel}>Typ podniku</Text>
+              <View style={{flexDirection:'row',flexWrap:'wrap',gap:8,marginBottom:14}}>
+                {PUB_TYPES.map(t=>(
+                  <TouchableOpacity key={t} style={[s.fChip,type===t&&s.fChipOn]} onPress={()=>setType(t)}>
+                    <Text style={[s.fChipT,type===t&&s.fChipTOn]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput style={s.input} placeholder="Adresa (volitelné)" placeholderTextColor={C.creamDim} value={address} onChangeText={setAddress}/>
+              <TextInput style={s.input} placeholder="Otevírací doba (volitelné)" placeholderTextColor={C.creamDim} value={hours} onChangeText={setHours}/>
+              <TextInput style={s.input} placeholder="Telefon (volitelné)" placeholderTextColor={C.creamDim} value={phone} onChangeText={setPhone} keyboardType="phone-pad"/>
+              <TextInput style={s.input} placeholder="Točená piva, oddělená čárkou (volitelné)" placeholderTextColor={C.creamDim} value={beers} onChangeText={setBeers}/>
+              <TouchableOpacity style={{flexDirection:'row',alignItems:'center',gap:10,marginBottom:14}} onPress={()=>setCard(v=>!v)}>
+                <Ionicons name={card?'checkbox':'square-outline'} size={22} color={C.amber}/>
+                <Text style={{color:C.cream,fontSize:14}}>Platba kartou</Text>
+              </TouchableOpacity>
+              <TextInput style={[s.input,{minHeight:60,textAlignVertical:'top'}]} placeholder="Poznámka (volitelné)" placeholderTextColor={C.creamDim} value={note} onChangeText={setNote} multiline/>
+              <TouchableOpacity style={[s.btnPri,{marginTop:4}]} onPress={submit} disabled={busy}>
+                {busy?<ActivityIndicator color={C.bg}/>:<><Ionicons name="add-circle-outline" size={18} color={C.bg}/><Text style={s.btnPriT}>Přidat hospůdku</Text></>}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // NAHLÁSIT CHYBU MODAL
 // ══════════════════════════════════════════════════════════════════════════════
 const REPORT_REASONS = ['Podnik neexistuje','Chybné informace','Chybná poloha na mapě','Podnik je trvale zavřen','Jiné'];
@@ -1612,17 +1689,14 @@ const ReportPubModal = ({ pub, onClose }) => {
   );
 };
 
-const ReportPhotoModal = ({ photo, pubId, onClose }) => {
+const ReportPhotoModal = ({ photo, onClose }) => {
   const [detail, setDetail] = useState('');
   const [busy, setBusy]     = useState(false);
 
   const submit = async () => {
     setBusy(true);
     try {
-      await apiFetch(`/pubs/${pubId}/report`, { method: 'POST', body: JSON.stringify({
-        reason: 'Nevhodná fotka',
-        detail: [detail, `Foto ID: ${photo?.id ?? '?'}`].filter(Boolean).join(' | '),
-      })});
+      await apiFetch(`/photos/${photo?.id}/report`, { method: 'POST', body: JSON.stringify({ detail }) });
       Alert.alert('Nahlášeno', 'Fotka byla nahlášena. Zkontrolujeme ji co nejdříve. Díky!');
       onClose();
     } catch(e) { Alert.alert('Chyba', e.message); }
@@ -2512,7 +2586,9 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
       {suggestMode&&(
         <View style={s.suggestHint}>
           <Ionicons name="location-outline" size={15} color={C.amber}/>
-          <Text style={{color:C.amber,fontSize:12,fontWeight:'700',flex:1}}>Klepni na mapu pro umístění návrhu</Text>
+          <Text style={{color:C.amber,fontSize:12,fontWeight:'700',flex:1}}>
+            {user?.is_admin ? 'Klepni na mapu pro přidání hospůdky' : 'Klepni na mapu pro umístění návrhu'}
+          </Text>
           <TouchableOpacity onPress={()=>{suggestModeRef.current=false;setSuggestMode(false);}}>
             <Ionicons name="close-circle" size={16} color={C.creamDim}/>
           </TouchableOpacity>
@@ -2748,7 +2824,10 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
       )}
       {filterMod&&<FilterModal filters={filters} onApply={f=>setFilters(f)} onClose={()=>setFilterMod(false)}/>}
       {offlineRegionsMod&&<OfflineRegionsModal mapStyleId={mapStyleId} onClose={()=>setOffReg(false)} onAreaDownloaded={()=>{loadData(); updateAreaWarning(viewport.center[1], viewport.center[0]);}} userId={user.id} />}
-      {suggestModal&&suggestCoords&&<SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>}
+      {suggestModal&&suggestCoords&&(user?.is_admin
+        ? <AddPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)} onAdded={loadData}/>
+        : <SuggestPubModal lat={suggestCoords.lat} lng={suggestCoords.lng} onClose={()=>setSuggestMod(false)}/>
+      )}
       {selectedPoi && (
         <View style={s.poiToast}>
           <View style={[s.poiIconWrap,{backgroundColor:selectedPoi.kind === 'parking' ? 'rgba(22,160,133,0.18)' : normalizeStopType(selectedPoi.stop_type) === 'train' ? 'rgba(142,68,173,0.18)' : 'rgba(41,128,185,0.18)'}]}>
@@ -4001,15 +4080,11 @@ const PersonalRecords = ({ userId }) => {
               <Ionicons name={r.icon} size={17} color={r.color}/>
               <View style={{flex:1}}>
                 <Text style={{color:C.creamDim,fontSize:11}}>{r.label}</Text>
-                {r.sub ? (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <Text style={{color:C.creamDim,fontSize:10,fontStyle:'italic'}}>{r.sub}</Text>
-                  </ScrollView>
-                ) : null}
+                {r.sub ? <Text style={{color:C.creamDim,fontSize:10,fontStyle:'italic'}} numberOfLines={1}>{r.sub}</Text> : null}
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{maxWidth:'55%'}}>
-                <Text style={{color:C.cream,fontWeight:'700',fontSize:13}}>{r.val}</Text>
-              </ScrollView>
+              <View style={{maxWidth:'55%'}}>
+                <Text style={{color:C.cream,fontWeight:'700',fontSize:13,textAlign:'right'}} numberOfLines={1}>{r.val}</Text>
+              </View>
             </Wrap>
           );
         })}

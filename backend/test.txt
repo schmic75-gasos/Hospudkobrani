@@ -1,0 +1,92 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# PUBS – filtr podle státu (offline stahování)
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/pubs")
+@require_auth
+def get_pubs():
+    country = request.args.get("country")
+    where = "WHERE p.active = 1"
+    args = []
+    if country:
+        where += " AND p.country = %s"
+        args.append(country.upper())
+    pubs = q(f"""
+        SELECT p.*,
+               ROUND(AVG(v.rating),1) as avg_rating,
+               COUNT(v.id)            as visit_count
+        FROM pubs p
+        LEFT JOIN visits v ON v.pub_id = p.id
+        {where}
+        GROUP BY p.id
+        ORDER BY p.name
+    """, tuple(args))
+    return jsonify([_pub_safe(p) for p in pubs])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NÁVRH NOVÉ HOSPŮDKY
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/pubs/suggest", methods=["POST"])
+@require_auth
+def suggest_pub():
+    d = request.get_json()
+    name = (d.get("name") or "").strip()[:200]
+    if not name:
+        return jsonify({"message": "Chybí název hospůdky"}), 400
+    lat = d.get("latitude")
+    lng = d.get("longitude")
+    if lat is None or lng is None:
+        return jsonify({"message": "Chybí souřadnice"}), 400
+    try:
+        lat, lng = float(lat), float(lng)
+    except (ValueError, TypeError):
+        return jsonify({"message": "Neplatné souřadnice"}), 400
+
+    sid = insert(
+        "INSERT INTO pub_suggestions (user_id, name, type, address, note, latitude, longitude, created_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())",
+        (g.user_id, name, d.get("type","hospoda"),
+         (d.get("address") or "")[:300],
+         (d.get("note") or "")[:500],
+         lat, lng)
+    )
+    return jsonify({"id": sid, "message": "Návrh odeslán"}), 201
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NAHLÁŠENÍ CHYBY U HOSPŮDKY
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/pubs/<int:pub_id>/report", methods=["POST"])
+@require_auth
+def report_pub(pub_id):
+    if not qone("SELECT id FROM pubs WHERE id=%s AND active=1", (pub_id,)):
+        return jsonify({"message": "Hospůdka nenalezena"}), 404
+    d = request.get_json()
+    reason = (d.get("reason") or "").strip()[:200]
+    if not reason:
+        return jsonify({"message": "Chybí důvod nahlášení"}), 400
+    detail = (d.get("detail") or "")[:1000]
+    insert(
+        "INSERT INTO pub_reports (pub_id, user_id, reason, detail, created_at) VALUES (%s,%s,%s,%s,NOW())",
+        (pub_id, g.user_id, reason, detail)
+    )
+    return jsonify({"message": "Nahlášení odesláno"}), 201
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LAJKY FOTEK V GALERII
+# ══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/community/gallery/<int:photo_id>/like", methods=["POST"])
+@require_auth
+def toggle_like(photo_id):
+    if not qone("SELECT id FROM pub_photos WHERE id=%s", (photo_id,)):
+        return jsonify({"message": "Foto nenalezeno"}), 404
+    existing = qone("SELECT id FROM photo_likes WHERE photo_id=%s AND user_id=%s", (photo_id, g.user_id))
+    if existing:
+        q("DELETE FROM photo_likes WHERE photo_id=%s AND user_id=%s", (photo_id, g.user_id))
+        liked = False
+    else:
+        insert("INSERT INTO photo_likes (photo_id, user_id, created_at) VALUES (%s,%s,NOW())", (photo_id, g.user_id))
+        liked = True
+    count = qone("SELECT COUNT(*) as n FROM photo_likes WHERE photo_id=%s", (photo_id,))["n"]
+    return jsonify({"liked": liked, "like_count": count})

@@ -5,7 +5,5 @@ ios/
 android/
 dist/
 ./sixth
-./backend
-backend/
 mapstyle.json
 .DS_Store
