@@ -3,7 +3,8 @@
     "scheme": "hospudkobrani",
     "name": "Hospůdkobraní",
     "slug": "hospudkobrani",
-    "version": "1.4.14",
+    "version": "1.5.0",
+    "author": "Michal Schneider",
     "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -77,7 +78,14 @@
           "RNMapboxMapsVersion": "11.20.1"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-2764641499857589~3265060801",
+          "iosAppId": "ca-app-pub-2764641499857589~3265060801"
+        }
+      ]
     ],
     "extra": {
       "eas": {

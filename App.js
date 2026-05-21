@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.4.14 - experimental
+ * Hospůdkobraní – App.js v1.5.0
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -22,6 +22,8 @@ import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import mobileAds, { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+
 
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -203,10 +205,13 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.4.14';
+const APP_VERSION = '1.5.0';
 
 let _telemetryEnabled = true;
 AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) _telemetryEnabled = v !== '0'; }).catch(() => {});
+
+let _adsEnabled = true;
+AsyncStorage.getItem('ads_enabled').then(v => { if (v !== null) _adsEnabled = v !== '0'; }).catch(() => {});
 
 const _telemetryContext = () => {
   const { width, height } = Dimensions.get('window');
@@ -405,6 +410,26 @@ async function registerBackgroundFetch() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ADMOB
+// ══════════════════════════════════════════════════════════════════════════════
+const ADMOB_BANNER_ID = 'ca-app-pub-2764641499857589/5701624677';
+
+const AdBanner = () => {
+  const [loaded, setLoaded] = useState(false);
+  if (!_adsEnabled) return null;
+  return (
+    <View style={loaded ? { alignItems: 'center', marginVertical: 8 } : { height: 0, overflow: 'hidden' }}>
+      <BannerAd
+        unitId={ADMOB_BANNER_ID}
+        size={BannerAdSize.BANNER}
+        onAdLoaded={() => setLoaded(true)}
+        onAdFailedToLoad={() => setLoaded(false)}
+      />
+    </View>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SHARED COMPONENTS
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -441,6 +466,8 @@ const Chip = ({ label, color = C.amber, icon }) => (
 const FollowButton = ({ userId, isFollowing, onFollowChange, size='normal' }) => {
   const [following, setFollowing] = useState(isFollowing);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => { setFollowing(isFollowing); }, [isFollowing]);
 
   const toggleFollow = async () => {
     setLoading(true);
@@ -495,12 +522,13 @@ const getPhotoLikeId = photo => photo?.id ?? photo?.photo_id ?? null;
 
 
 // Fullscreen photo viewer with likes and author click
-const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
+const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate, pubId }) => {
   const [cur, setCur] = useState(startIndex);
   const [likedState, setLikedState] = useState(photos.map(p => p.liked || false));
   const [likeCounts, setLikeCounts] = useState(photos.map(p => p.like_count || 0));
   const [imgError, setImgError] = useState(false);
   const [userModal, setUserModal] = useState(null);
+  const [reportMod, setReportMod] = useState(false);
   const fa = useRef(new Animated.Value(0)).current;
   const currentPhoto = photos[cur];
   const currentPhotoLikeId = getPhotoLikeId(currentPhoto);
@@ -567,8 +595,23 @@ const PhotoViewer = ({ photos, startIndex, onClose, userId, onLikeUpdate }) => {
         <TouchableOpacity style={s.pvClose} onPress={close}>
           <Ionicons name="close" size={26} color={C.white} />
         </TouchableOpacity>
+        {(currentPhoto?.pub_id || pubId) && (
+          <TouchableOpacity
+            style={[s.pvClose, {right: undefined, left: 20}]}
+            onPress={() => setReportMod(true)}
+          >
+            <Ionicons name="flag-outline" size={22} color={C.white} />
+          </TouchableOpacity>
+        )}
       </Animated.View>
       {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={()=>setUserModal(null)} />}
+      {reportMod && (
+        <ReportPhotoModal
+          photo={currentPhoto}
+          pubId={currentPhoto?.pub_id || pubId}
+          onClose={() => setReportMod(false)}
+        />
+      )}
     </Modal>
   );
 };
@@ -720,20 +763,6 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
   useEffect(() => {
     apiFetch(`/users/find?q=${encodeURIComponent(username)}`).then(setProfile).catch(()=>setProfile(null)).finally(()=>setLoading(false));
   }, [username, selfId]);
-
-  useEffect(() => {
-    if (profile) {
-      // Refresh follow status
-      apiFetch(`/users/find?q=${encodeURIComponent(username)}`)
-        .then(updatedProfile => {
-          if (updatedProfile) {
-            setProfile(updatedProfile);
-            setFollowState(updatedProfile.is_following || false);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [followState]);
 
   useEffect(() => {
     if (!profile) return;
@@ -1130,7 +1159,7 @@ const PubDetailModal = ({ pub, onClose, userId, nearbyTransport }) => {
           </ScrollView>
         </View>
       </View>
-      {pv!==null && <PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)} userId={userId} onLikeUpdate={handleLikeUpdate} />}
+      {pv!==null && <PhotoViewer photos={photos} startIndex={pv} onClose={()=>setPv(null)} userId={userId} onLikeUpdate={handleLikeUpdate} pubId={pub.id} />}
       {userModal && <UserProfileModal username={userModal} selfId={userId} onClose={()=>setUserModal(null)}/>}
       {reportMod && <ReportPubModal pub={pub} onClose={()=>setReportMod(false)}/>}
     </Modal>
@@ -1583,6 +1612,50 @@ const ReportPubModal = ({ pub, onClose }) => {
   );
 };
 
+const ReportPhotoModal = ({ photo, pubId, onClose }) => {
+  const [detail, setDetail] = useState('');
+  const [busy, setBusy]     = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await apiFetch(`/pubs/${pubId}/report`, { method: 'POST', body: JSON.stringify({
+        reason: 'Nevhodná fotka',
+        detail: [detail, `Foto ID: ${photo?.id ?? '?'}`].filter(Boolean).join(' | '),
+      })});
+      Alert.alert('Nahlášeno', 'Fotka byla nahlášena. Zkontrolujeme ji co nejdříve. Díky!');
+      onClose();
+    } catch(e) { Alert.alert('Chyba', e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent>
+      <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':'height'} style={{width:'100%'}}>
+          <View style={s.modalCard}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Nahlásit fotku</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim}/></TouchableOpacity>
+            </View>
+            <Text style={[s.dimText,{marginBottom:14}]}>Fotka bude nahlášena jako nevhodný obsah.</Text>
+            <Text style={[s.secLabel,{marginBottom:6}]}>Popis (volitelné)</Text>
+            <TextInput
+              style={[s.input,{minHeight:70,textAlignVertical:'top'}]}
+              placeholder="Proč tuto fotku nahlašuješ? (nepovinné)"
+              placeholderTextColor={C.creamDim}
+              value={detail} onChangeText={setDetail} multiline
+            />
+            <TouchableOpacity style={[s.btnPri,{marginTop:8}]} onPress={submit} disabled={busy}>
+              {busy?<ActivityIndicator color={C.bg}/>:<><Ionicons name="flag" size={16} color={C.bg}/><Text style={s.btnPriT}>Nahlásit</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ROUTING MODAL (GraphHopper)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1678,7 +1751,7 @@ const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteRead
     const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Hospůdkobraní" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>Trasa Hospůdkobraní</name><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
     try {
       const uri = FileSystem.cacheDirectory + `trasa_${Date.now()}.gpx`;
-      await FileSystem.writeAsStringAsync(uri, gpxContent, { encoding: FileSystem.EncodingType.UTF8 });
+      await FileSystem.writeAsStringAsync(uri, gpxContent, { encoding: 'utf8' });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: 'application/gpx+xml', dialogTitle: 'Exportovat GPX trasy' });
       } else {
@@ -3203,6 +3276,7 @@ const VisitsScreen = ({ user }) => {
         contentContainerStyle={{padding:16,paddingBottom:100}}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.amber} colors={[C.amber]}
           onRefresh={()=>{setRefr(true);load(true);}}/>}
+        ListFooterComponent={<AdBanner/>}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="beer-outline" size={60} color={C.border}/><Text style={s.emptyT}>Zatím žádné návštěvy</Text><Text style={s.emptySub}>Jdi na mapu a odklikni svoji první!</Text></View>}
       />
       {detailLoad&&<View style={[StyleSheet.absoluteFill,{backgroundColor:'rgba(0,0,0,0.45)',alignItems:'center',justifyContent:'center'}]}><ActivityIndicator color={C.amber} size="large"/></View>}
@@ -3253,6 +3327,7 @@ const ChallengesScreen = ({ user }) => {
       </View>
       <FlatList data={challenges} keyExtractor={i=>String(i.id)} renderItem={renderItem}
         contentContainerStyle={{padding:16,paddingBottom:100}}
+        ListFooterComponent={<AdBanner/>}
         ListEmptyComponent={<View style={s.empty}><Ionicons name="trophy-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádné výzvy</Text></View>}
       />
     </View>
@@ -3311,6 +3386,7 @@ const LeaderboardTab = ({ user }) => {
           contentContainerStyle={{padding:16,paddingBottom:20}}
           refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.amber} colors={[C.amber]}
             onRefresh={()=>{setRefr(true);load(true);}}/>}
+          ListFooterComponent={<AdBanner/>}
           ListEmptyComponent={<View style={s.empty}><Ionicons name="trophy-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádná data</Text></View>}
         />
       )}
@@ -3886,34 +3962,60 @@ const ActivityCalendar = () => {
 // ══════════════════════════════════════════════════════════════════════════════
 // PERSONAL RECORDS
 // ══════════════════════════════════════════════════════════════════════════════
-const PersonalRecords = () => {
+const PersonalRecords = ({ userId }) => {
   const [rec, setRec] = useState(null);
+  const [detailPub, setDetailPub] = useState(null);
+  const [detailLoad, setDetailLoad] = useState(false);
+
   useEffect(() => { apiFetch('/profile/records').then(setRec).catch(() => {}); }, []);
+
+  const openPub = async (pubId) => {
+    if (!pubId) return;
+    setDetailLoad(true);
+    try { setDetailPub(await apiFetch(`/pubs/${pubId}`)); } catch {}
+    setDetailLoad(false);
+  };
+
   if (!rec) return null;
   const rows = [
     { icon:'flame-outline',         color:C.red,    label:'Nejvyšší streak',          val:rec.max_streak        ? `${rec.max_streak} dní`         : '–' },
-    { icon:'document-text-outline', color:C.teal,   label:'Nejdelší recenze',         val:rec.longest_note_len  ? `${rec.longest_note_len} znaků` : '–', sub:rec.longest_note_pub },
-    { icon:'beer-outline',          color:C.amber,  label:'Nejdelší název hospůdky',  val:rec.longest_name  || '–' },
-    { icon:'arrow-back-outline',    color:C.purple, label:'Nejzápadnější hospůdka',   val:rec.westernmost   || '–' },
-    { icon:'arrow-up-outline',      color:C.green,  label:'Nejsevernější hospůdka',   val:rec.northernmost  || '–' },
-    { icon:'arrow-down-outline',    color:C.red,    label:'Nejjižnější hospůdka',     val:rec.southernmost  || '–' },
-    { icon:'arrow-forward-outline', color:C.amber,  label:'Nejvýchodnější hospůdka',  val:rec.easternmost   || '–' },
+    { icon:'document-text-outline', color:C.teal,   label:'Nejdelší recenze',         val:rec.longest_note_len  ? `${rec.longest_note_len} znaků` : '–', sub:rec.longest_note_pub, pubId:rec.longest_note_pub_id },
+    { icon:'beer-outline',          color:C.amber,  label:'Nejdelší název hospůdky',  val:rec.longest_name  || '–', pubId:rec.longest_name_id },
+    { icon:'arrow-back-outline',    color:C.purple, label:'Nejzápadnější hospůdka',   val:rec.westernmost   || '–', pubId:rec.westernmost_id },
+    { icon:'arrow-up-outline',      color:C.green,  label:'Nejsevernější hospůdka',   val:rec.northernmost  || '–', pubId:rec.northernmost_id },
+    { icon:'arrow-down-outline',    color:C.red,    label:'Nejjižnější hospůdka',     val:rec.southernmost  || '–', pubId:rec.southernmost_id },
+    { icon:'arrow-forward-outline', color:C.amber,  label:'Nejvýchodnější hospůdka',  val:rec.easternmost   || '–', pubId:rec.easternmost_id },
   ];
   return (
     <View style={{marginHorizontal:16,marginBottom:16}}>
       <Text style={s.secLabel}>Osobní rekordy</Text>
       <View style={{backgroundColor:C.bgCard,borderRadius:14,borderWidth:1,borderColor:C.border,overflow:'hidden'}}>
-        {rows.map((r,i)=>(
-          <View key={i} style={{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:10,paddingHorizontal:12,borderBottomWidth:i<rows.length-1?1:0,borderBottomColor:C.border}}>
-            <Ionicons name={r.icon} size={17} color={r.color}/>
-            <View style={{flex:1}}>
-              <Text style={{color:C.creamDim,fontSize:11}}>{r.label}</Text>
-              {r.sub ? <Text style={{color:C.creamDim,fontSize:10,fontStyle:'italic'}} numberOfLines={1}>{r.sub}</Text> : null}
-            </View>
-            <Text style={{color:C.cream,fontWeight:'700',fontSize:13,textAlign:'right',maxWidth:'55%'}} numberOfLines={1}>{r.val}</Text>
-          </View>
-        ))}
+        {rows.map((r,i) => {
+          const Wrap = r.pubId ? TouchableOpacity : View;
+          return (
+            <Wrap key={i}
+              style={{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:10,paddingHorizontal:12,borderBottomWidth:i<rows.length-1?1:0,borderBottomColor:C.border}}
+              onPress={r.pubId ? () => openPub(r.pubId) : undefined}
+              activeOpacity={0.7}
+            >
+              <Ionicons name={r.icon} size={17} color={r.color}/>
+              <View style={{flex:1}}>
+                <Text style={{color:C.creamDim,fontSize:11}}>{r.label}</Text>
+                {r.sub ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <Text style={{color:C.creamDim,fontSize:10,fontStyle:'italic'}}>{r.sub}</Text>
+                  </ScrollView>
+                ) : null}
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{maxWidth:'55%'}}>
+                <Text style={{color:C.cream,fontWeight:'700',fontSize:13}}>{r.val}</Text>
+              </ScrollView>
+            </Wrap>
+          );
+        })}
       </View>
+      {detailLoad && <View style={{alignItems:'center',marginTop:8}}><ActivityIndicator color={C.amber} size="small"/></View>}
+      {detailPub && <PubDetailModal pub={detailPub} onClose={() => setDetailPub(null)} userId={userId}/>}
     </View>
   );
 };
@@ -3939,9 +4041,11 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
   const [delLoading, setDelLoading]   = useState(false);
   const [gdprModalVisible, setGdprModalVisible] = useState(false);
   const [telemetryOn, setTelemetryOn] = useState(true);
+  const [adsOn, setAdsOn]             = useState(true);
 
   useEffect(()=>{
     AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) setTelemetryOn(v !== '0'); }).catch(()=>{});
+    AsyncStorage.getItem('ads_enabled').then(v => { if (v !== null) setAdsOn(v !== '0'); }).catch(()=>{});
   }, []);
 
   useEffect(()=>{ loadAll(); checkOff(); const interval = setInterval(checkNewLikes, 60000); return () => clearInterval(interval); },[]);
@@ -4176,7 +4280,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
       <ActivityCalendar/>
 
       {/* Personal records */}
-      <PersonalRecords/>
+      <PersonalRecords userId={user.id}/>
 
       {/* Offline sync */}
       {offQ>0&&(
@@ -4249,6 +4353,25 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
           borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'
         }}>
           <Ionicons name={(me.map_remember_position === true) ? 'checkmark' : 'ellipse'} size={12} color={C.white}/>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.border}/>
+      </View>
+    </TouchableOpacity>
+
+    {/* Ads toggle (BETA) */}
+    <TouchableOpacity style={s.settRow} onPress={async () => {
+      const val = !adsOn;
+      _adsEnabled = val;
+      await AsyncStorage.setItem('ads_enabled', val ? '1' : '0');
+      setAdsOn(val);
+    }}>
+      <Ionicons name="megaphone-outline" size={18} color={C.amber}/>
+      <Text style={{fontSize:15,fontWeight:'600',color:C.cream}}>
+        Reklamy {adsOn ? 'zapnuty' : 'vypnuty'} <Text style={{color:C.creamDim,fontSize:12}}>(BETA)</Text>
+      </Text>
+      <View style={{flexDirection:'row',alignItems:'center',gap:4,marginLeft:'auto'}}>
+        <View style={{width:20,height:20,borderRadius:10,backgroundColor:adsOn?C.green:C.bgCardAlt,borderWidth:1,borderColor:C.border,justifyContent:'center',alignItems:'center'}}>
+          <Ionicons name={adsOn?'checkmark':'ellipse'} size={12} color={C.white}/>
         </View>
         <Ionicons name="chevron-forward" size={16} color={C.border}/>
       </View>
@@ -4336,10 +4459,10 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.4.14 (EXPERIMENTAL) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.5.0 (EXPERIMENTAL IMPLEMENTATION OF GOOGLE ADS) - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <GdprInfoModal visible={gdprModalVisible} onClose={() => setGdprModalVisible(false)} />
-      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal S. & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
+      <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal Schneider & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
       <View style={{flexDirection:'row',justifyContent:'center',gap:24,paddingBottom:16}}>
         <TouchableOpacity onPress={()=>Linking.openURL('https://www.facebook.com/profile.php?id=100091510912279')}>
           <MaterialCommunityIcons name="facebook" size={30} color='#1877F2'/>
@@ -4425,6 +4548,8 @@ export default function App() {
   const [tab, setTab]     = useState('map');
   const [deepLinkPubId, setDeepLinkPubId] = useState(null);
   const [showTutorial, setShowTutorial] = useState(false);
+
+  useEffect(() => { mobileAds().initialize().catch(() => {}); }, []);
 
   useEffect(()=>{
     (async()=>{
