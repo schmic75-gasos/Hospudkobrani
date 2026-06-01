@@ -1,5 +1,5 @@
 /**
- * Hospůdkobraní – App.js v1.5.1
+ * Hospůdkobraní – App.js v1.5.2
  * HOSPŮDKOBRANÍ JE DÍLEM MICHALA SCHNEIDERA. PROSÍM, NEKOPÍRUJTE ANI NEVYUŽÍVEJTE KÓD NEBO OBSAH APLIKACE BEZ JEHO SOUHLASU.
  * Nové funkce: trasování, transport módy, heatmap kalendář, prvochlasty, změna hesla, sdílení aj.
  */
@@ -205,7 +205,7 @@ const clearQ      = ()       => AsyncStorage.removeItem('oq');
 const removeQItems = async (qids) => { const q=await getQ(); await AsyncStorage.setItem('oq',JSON.stringify(q.filter(i=>!i._qid||!qids.includes(i._qid)))); };
 
 // ─── TELEMETRIE ────────────────────────────────────────────────────────────────
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.2';
 
 let _telemetryEnabled = true;
 AsyncStorage.getItem('telemetry_enabled').then(v => { if (v !== null) _telemetryEnabled = v !== '0'; }).catch(() => {});
@@ -779,6 +779,13 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
     }
   };
 
+  const shareUser = () => {
+    if (!profile) return;
+    const url = `https://hospudkobrani-8888.rostiapp.cz/user/${encodeURIComponent(profile.username)}`;
+    const text = `Podívej se na profil uživatele „${profile.username}" v Hospůdkobraní!`;
+    Share.share({ message: `${text}\n${url}`, url });
+  };
+
   if (loading) return <View style={s.center}><ActivityIndicator color={C.amber} /></View>;
 
   const avatarVisible = profile?.avatar_url && (
@@ -793,7 +800,14 @@ const UserProfileModal = ({ username, selfId, onClose }) => {
         <View style={[s.modalCard, { maxHeight: SH * 0.75 }]}>
           <View style={s.modalHeader}>
             <Text style={s.modalTitle}>Profil Hospůdkobraníka</Text>
-            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
+            <View style={{flexDirection:'row',alignItems:'center',gap:12}}>
+              {profile && (
+                <TouchableOpacity onPress={shareUser}>
+                  <Ionicons name="share-outline" size={20} color={C.creamDim}/>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.creamDim} /></TouchableOpacity>
+            </View>
           </View>
           {!profile ? (
             <Text style={[s.dimText, { margin: 20 }]}>Profil nenalezen.</Text>
@@ -1194,11 +1208,21 @@ const decodePoly = (encoded) => {
   }
   return coords;
 };
-const fetchGHRoute = async (waypoints, profile = 'foot') => {
+const fetchGHRoute = async (waypoints, profile = 'foot', avoidMotorway = false) => {
   const pts = waypoints.map(p => `point=${p.lat},${p.lng}`).join('&');
-  const url = `https://graphhopper.com/api/1/route?${pts}&profile=${profile}&locale=cs&calc_points=true&points_encoded=true&key=${GRAPHHOPPER_KEY}`;
+  let url = `https://graphhopper.com/api/1/route?${pts}&profile=${profile}&locale=cs&calc_points=true&points_encoded=true&key=${GRAPHHOPPER_KEY}`;
+  
+  // For car profile with avoid motorways, we need to disable CH and use custom model
+  if (profile === 'car' && avoidMotorway) {
+    const customModel = encodeURIComponent(JSON.stringify({ "priority": [{ "if": "road_class == MOTORWAY", "multiply_by": 0.1 }] }));
+    url += `&ch.disable=true&custom_model=${customModel}`;
+  }
+  
   const res = await fetch(url);
-  if (!res.ok) throw new Error('Nelze naplánovat trasu');
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || 'Nelze naplánovat trasu');
+  }
   const data = await res.json();
   if (!data.paths?.length) throw new Error('Trasa nenalezena');
   const path = data.paths[0];
@@ -1731,6 +1755,197 @@ const ReportPhotoModal = ({ photo, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PUBS LIST MODAL (Search, Filter, GPX Export)
+// ══════════════════════════════════════════════════════════════════════════════
+const PubsListModal = ({ visible, pubs, visited, onClose, onSelectPub }) => {
+  const [searchQ, setSearchQ] = useState('');
+  const [filterVisited, setFilterVisited] = useState('all'); // 'all', 'visited', 'unvisited'
+  const [exporting, setExporting] = useState(false);
+
+  const filteredPubs = useMemo(() => {
+    let result = [...pubs];
+    // Text search
+    const q = searchQ.trim().toLowerCase();
+    if (q) {
+      result = result.filter(p =>
+        (p.name||'').toLowerCase().includes(q) ||
+        (p.address||'').toLowerCase().includes(q) ||
+        (p.city||'').toLowerCase().includes(q) ||
+        (p.type||'').toLowerCase().includes(q)
+      );
+    }
+    // Visited filter
+    if (filterVisited === 'visited') {
+      result = result.filter(p => visited.has(p.id));
+    } else if (filterVisited === 'unvisited') {
+      result = result.filter(p => !visited.has(p.id));
+    }
+    // Sort by name
+    return result.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [pubs, searchQ, filterVisited, visited]);
+
+  const exportAsGPX = async (exportAll = false) => {
+    const pubsToExport = exportAll ? filteredPubs : filteredPubs.slice(0, 500); // Limit for safety
+    if (pubsToExport.length === 0) {
+      Alert.alert('Žádné hospůdky', 'Není co exportovat.');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      // Create GPX waypoints
+      const waypoints = pubsToExport.map(p =>
+        `    <wpt lat="${p.latitude}" lon="${p.longitude}">
+      <name>${escapeXml(p.name || 'Hospůdka')}</name>
+      <desc>${escapeXml([p.type, p.address, p.city].filter(Boolean).join(' · '))}</desc>
+    </wpt>`
+      ).join('\n');
+
+      const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Hospůdkobraní" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Hospůdky Hospůdkobraní</name>
+    <desc>${pubsToExport.length} hospůdek</desc>
+  </metadata>
+${waypoints}
+</gpx>`;
+
+      const fileName = `hospudky_${Date.now()}.gpx`;
+      const fileUri = FileSystem.cacheDirectory + fileName;
+      const file = new File(fileUri, { writable: true, size: gpxContent.length });
+      await file.write(gpxContent);
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'application/gpx+xml', dialogTitle: 'Exportovat hospůdky GPX' });
+      } else {
+        Alert.alert('Sdílení nedostupné', 'Toto zařízení nepodporuje sdílení souborů.');
+      }
+    } catch (e) {
+      Alert.alert('Chyba', 'GPX se nepodařilo exportovat: ' + e.message);
+    }
+    setExporting(false);
+  };
+
+  const renderItem = ({ item }) => {
+    const isVisited = visited.has(item.id);
+    return (
+      <TouchableOpacity
+        style={[s.pubListItem, isVisited && s.pubListItemVisited]}
+        onPress={() => onSelectPub(item)}
+        activeOpacity={0.7}
+      >
+        <View style={{flexDirection:'row',alignItems:'center',gap:10}}>
+          <View style={[s.pubListIcon, {backgroundColor: isVisited ? C.green : C.amber}]}>
+            <Ionicons name="beer" size={16} color={C.bg} />
+          </View>
+          <View style={{flex:1}}>
+            <Text style={s.pubListName} numberOfLines={1}>{item.name}</Text>
+            <Text style={s.pubListMeta} numberOfLines={1}>
+              {[item.type, item.city].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
+          {isVisited && <Ionicons name="checkmark-circle" size={20} color={C.green} />}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={s.modalOverlay}>
+        <View style={[s.modalCard, {maxHeight: SH * 0.9, flex: 1}]}>
+          {/* Header */}
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Seznam hospůdek ({filteredPubs.length})</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+          </View>
+
+          {/* Search */}
+          <View style={{flexDirection:'row',alignItems:'center',backgroundColor:C.bgCard,borderRadius:12,borderWidth:1,borderColor:C.border,paddingHorizontal:12,marginBottom:12}}>
+            <Ionicons name="search-outline" size={18} color={C.creamDim} style={{marginRight:8}}/>
+            <TextInput
+              style={{flex:1,color:C.cream,fontSize:14,paddingVertical:10}}
+              placeholder="Hledat hospůdku..."
+              placeholderTextColor={C.creamDim}
+              value={searchQ}
+              onChangeText={setSearchQ}
+              autoCorrect={false}
+            />
+            {searchQ.length > 0 && (
+              <TouchableOpacity onPress={()=>setSearchQ('')}>
+                <Ionicons name="close-circle" size={18} color={C.creamDim}/>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Filters */}
+          <View style={{flexDirection:'row',gap:8,marginBottom:12}}>
+            {[
+              ['all', 'Vše', 'list-outline'],
+              ['visited', 'Odkliknuté', 'checkmark-circle'],
+              ['unvisited', 'Neodkliknuté', 'ellipse-outline'],
+            ].map(([key, label, icon]) => (
+              <TouchableOpacity
+                key={key}
+                style={[s.pubListFilterBtn, filterVisited === key && s.pubListFilterBtnActive]}
+                onPress={() => setFilterVisited(key)}
+              >
+                <Ionicons name={icon} size={14} color={filterVisited === key ? C.bg : C.creamDim} style={{marginRight:4}}/>
+                <Text style={[s.pubListFilterBtnText, filterVisited === key && {color:C.bg}]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Export buttons */}
+          <View style={{flexDirection:'row',gap:8,marginBottom:12}}>
+            <TouchableOpacity
+              style={[s.btnSec,{flex:1,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:6}]}
+              onPress={() => exportAsGPX(true)}
+              disabled={exporting || filteredPubs.length === 0}
+            >
+              {exporting ? <ActivityIndicator size="small" color={C.teal}/> : <>
+                <Ionicons name="download-outline" size={16} color={C.teal}/>
+                <Text style={{color:C.teal,fontWeight:'600'}}>Exportovat vše</Text>
+              </>}
+            </TouchableOpacity>
+          </View>
+
+          {/* List */}
+          <FlatList
+            data={filteredPubs}
+            keyExtractor={p => String(p.id)}
+            renderItem={renderItem}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{paddingBottom:20}}
+            ListEmptyComponent={(
+              <View style={{alignItems:'center',padding:40}}>
+                <Ionicons name="beer-outline" size={48} color={C.border}/>
+                <Text style={{color:C.creamDim,marginTop:12,textAlign:'center'}}>
+                  {searchQ ? 'Žádná hospůdka nevyhovuje hledání' : 'Žádné hospůdky k zobrazení'}
+                </Text>
+              </View>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// XML escape helper function (global)
+const escapeXml = (str) => {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ROUTING MODAL (GraphHopper)
 // ══════════════════════════════════════════════════════════════════════════════
 const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteReady, onClose }) => {
@@ -1806,9 +2021,8 @@ const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteRead
     if (filled.length < 2) { Alert.alert('Chybí body','Zvol alespoň start a cíl.'); return; }
     setCalc(true);
     try {
-      let ghProfile = TRANSPORT_MODES.find(m=>m.id===profile)?.gh || 'foot';
-      if (profile === 'car' && avoidMotorway) ghProfile = 'car_avoid_motorway';
-      const result = await fetchGHRoute(filled, ghProfile);
+      const ghProfile = TRANSPORT_MODES.find(m=>m.id===profile)?.gh || 'foot';
+      const result = await fetchGHRoute(filled, ghProfile, profile === 'car' && avoidMotorway);
       setRouteInfo(result);
       onRouteReady(result);
     } catch(e) { Alert.alert('Chyba trasování', e.message); }
@@ -1824,10 +2038,12 @@ const RoutingModal = ({ visible, pubs, visited = new Set(), userLoc, onRouteRead
     ).join('\n');
     const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Hospůdkobraní" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk><name>Trasa Hospůdkobraní</name><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
     try {
-      const uri = FileSystem.cacheDirectory + `trasa_${Date.now()}.gpx`;
-      await FileSystem.writeAsStringAsync(uri, gpxContent, { encoding: 'utf8' });
+      const fileName = `trasa_${Date.now()}.gpx`;
+      const fileUri = FileSystem.cacheDirectory + fileName;
+      const file = new File(fileUri, { writable: true, size: gpxContent.length });
+      await file.write(gpxContent);
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType: 'application/gpx+xml', dialogTitle: 'Exportovat GPX trasy' });
+        await Sharing.shareAsync(fileUri, { mimeType: 'application/gpx+xml', dialogTitle: 'Exportovat GPX trasy' });
       } else {
         Alert.alert('Sdílení nedostupné', 'Toto zařízení nepodporuje sdílení souborů.');
       }
@@ -2077,6 +2293,8 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
   const [nearbyTransport, setNearbyTransport] = useState({ stops: [], parking: [] });
   const [transportLoading, setTransportLoading] = useState(false);
   const [selectedPoi, setSelectedPoi]   = useState(null);
+  const [menuMinimized, setMenuMinimized] = useState(false);
+  const [pubsListModal, setPubsListModal] = useState(false);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   const activeMapStyleUrl = useMemo(() => {
@@ -2545,42 +2763,71 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
 
       {/* Controls */}
       <View style={s.mapCtrl}>
-        <TouchableOpacity style={s.mapBtn} onPress={()=>{
-          if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
-          cameraRef.current?.setCamera({
-            centerCoordinate: [loc.longitude, loc.latitude],
-            zoomLevel: 14,
-            animationDuration: 800,
-            animationMode: 'flyTo',
-          });
-        }}>
-          <Ionicons name="locate-outline" size={22} color={C.amber}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.mapBtn} onPress={()=>setFilterMod(true)}>
-          <Ionicons name="options-outline" size={22} color={fCount>0?C.amber:C.creamDim}/>
-          {fCount>0&&<View style={s.fBadge}><Text style={s.fBadgeT}>{fCount}</Text></View>}
-        </TouchableOpacity>
-        <TouchableOpacity style={s.mapBtn} onPress={()=>setOffReg(true)}>
-          <Ionicons name="download-outline" size={22} color={C.creamDim}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.mapBtn, mapStyleId!==MAPBOX_STYLE_OPTIONS[0].id && {borderColor:C.amber,borderWidth:2}]}
-          onPress={()=>setStylePickerOpen(true)}>
-          <Ionicons name="layers-outline" size={22} color={C.creamDim}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.mapBtn,suggestMode&&{borderColor:C.amber,borderWidth:2}]}
-          onPress={()=>{
-            const next=!suggestModeRef.current;
-            suggestModeRef.current=next;
-            setSuggestMode(next);
-          }}>
-          <Ionicons name="add-outline" size={24} color={suggestMode?C.amber:C.creamDim}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.mapBtn,routeShape&&{borderColor:C.teal,borderWidth:2}]} onPress={()=>setRoutingMod(true)}>
-          <Ionicons name="navigate-outline" size={22} color={routeShape?C.teal:C.creamDim}/>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.mapBtn} onPress={()=>{ setSearchQ(''); setSearchMod(true); }}>
-          <Ionicons name="search-outline" size={22} color={C.creamDim}/>
-        </TouchableOpacity>
+        {menuMinimized ? (
+          // Minimized - only show toggle and GPS
+          <>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>setMenuMinimized(false)}>
+              <Ionicons name="chevron-up-outline" size={22} color={C.amber}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>{
+              if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
+              cameraRef.current?.setCamera({
+                centerCoordinate: [loc.longitude, loc.latitude],
+                zoomLevel: 14,
+                animationDuration: 800,
+                animationMode: 'flyTo',
+              });
+            }}>
+              <Ionicons name="locate-outline" size={22} color={C.amber}/>
+            </TouchableOpacity>
+          </>
+        ) : (
+          // Expanded - show all buttons
+          <>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>setMenuMinimized(true)}>
+              <Ionicons name="chevron-down-outline" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>{
+              if(!loc){Alert.alert('Poloha','Poloha není dostupná');return;}
+              cameraRef.current?.setCamera({
+                centerCoordinate: [loc.longitude, loc.latitude],
+                zoomLevel: 14,
+                animationDuration: 800,
+                animationMode: 'flyTo',
+              });
+            }}>
+              <Ionicons name="locate-outline" size={22} color={C.amber}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>setFilterMod(true)}>
+              <Ionicons name="options-outline" size={22} color={fCount>0?C.amber:C.creamDim}/>
+              {fCount>0&&<View style={s.fBadge}><Text style={s.fBadgeT}>{fCount}</Text></View>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>setOffReg(true)}>
+              <Ionicons name="download-outline" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.mapBtn, mapStyleId!==MAPBOX_STYLE_OPTIONS[0].id && {borderColor:C.amber,borderWidth:2}]}
+              onPress={()=>setStylePickerOpen(true)}>
+              <Ionicons name="layers-outline" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.mapBtn,suggestMode&&{borderColor:C.amber,borderWidth:2}]}
+              onPress={()=>{
+                const next=!suggestModeRef.current;
+                suggestModeRef.current=next;
+                setSuggestMode(next);
+              }}>
+              <Ionicons name="add-outline" size={24} color={suggestMode?C.amber:C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.mapBtn,routeShape&&{borderColor:C.teal,borderWidth:2}]} onPress={()=>setRoutingMod(true)}>
+              <Ionicons name="navigate-outline" size={22} color={routeShape?C.teal:C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>{ setSearchQ(''); setSearchMod(true); }}>
+              <Ionicons name="search-outline" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.mapBtn} onPress={()=>setPubsListModal(true)}>
+              <Ionicons name="list-outline" size={22} color={C.creamDim}/>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
       {suggestMode&&(
@@ -2849,6 +3096,29 @@ const MapScreen = ({ user, deepLinkPubId, onDeepLinkHandled }) => {
             <Ionicons name="close" size={18} color={C.creamDim}/>
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* Pubs List Modal */}
+      {pubsListModal && (
+        <PubsListModal
+          visible={pubsListModal}
+          pubs={pubs}
+          visited={visited}
+          onClose={()=>setPubsListModal(false)}
+          onSelectPub={(pub)=>{
+            setPubsListModal(false);
+            if(Number.isFinite(pub.latitude)&&Number.isFinite(pub.longitude)){
+              cameraRef.current?.setCamera({
+                centerCoordinate:[pub.longitude,pub.latitude],
+                zoomLevel:16,
+                animationDuration:800,
+                animationMode:'flyTo',
+              });
+            }
+            setSelPub(pub);
+            setShowSheet(true);
+          }}
+        />
       )}
 
       <RoutingModal visible={routingMod} pubs={pubs} visited={visited} userLoc={loc}
@@ -3424,6 +3694,7 @@ const LeaderboardTab = ({ user }) => {
   const [refreshing, setRefr] = useState(false);
   const [mode, setMode]       = useState('visits');
   const [userModal, setUM]    = useState(null);
+  const [searchQ, setSearchQ] = useState('');
   useEffect(()=>{ setLoading(true); load(); },[mode]);
   const load = async(force=false)=>{
     const k=`lb_${mode}`; if(force)bust(k);
@@ -3431,12 +3702,26 @@ const LeaderboardTab = ({ user }) => {
     catch{}
     setLoading(false); setRefr(false);
   };
-  const MEDALS=['🥇','🥈','🥉'];
+  const filteredBoard = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return board;
+    return board.filter(item => (item.username || '').toLowerCase().includes(q));
+  }, [board, searchQ]);
   const renderItem=({item,index})=>{
     const isMe=item.user_id===user.id;
+    const rank = index + 1;
+    // Medal icons for top 3
+    const renderRank = () => {
+      if (rank === 1) return <Ionicons name="trophy" size={22} color={C.star} />;
+      if (rank === 2) return <Ionicons name="medal" size={20} color="#C0C0C0" />;
+      if (rank === 3) return <Ionicons name="medal" size={20} color="#CD7F32" />;
+      return <Text style={[s.lbRank, { color: C.white }]}>{rank}.</Text>;
+    };
     return(
       <TouchableOpacity style={[s.lbRow,isMe&&s.lbRowMe]} onPress={()=>setUM(item.username)} activeOpacity={0.75}>
-        <Text style={s.lbRank}>{index<3?MEDALS[index]:`${index+1}.`}</Text>
+        <View style={{width:34,alignItems:'center',justifyContent:'center'}}>
+          {renderRank()}
+        </View>
         <Avatar url={item.avatar_url} size={40}/>
         <View style={{flex:1,marginLeft:10}}>
           <Text style={[s.lbName,isMe&&{color:C.amber}]}>{item.username}{isMe?' (já)':''}</Text>
@@ -3460,13 +3745,38 @@ const LeaderboardTab = ({ user }) => {
           </TouchableOpacity>
         ))}
       </View>
+      {/* Search bar */}
+      <View style={{paddingHorizontal:16,marginBottom:12}}>
+        <View style={{flexDirection:'row',alignItems:'center',backgroundColor:C.bgCard,borderRadius:12,borderWidth:1,borderColor:C.border,paddingHorizontal:12}}>
+          <Ionicons name="search-outline" size={18} color={C.creamDim} style={{marginRight:8}}/>
+          <TextInput
+            style={{flex:1,color:C.cream,fontSize:14,paddingVertical:10}}
+            placeholder="Hledat uživatele..."
+            placeholderTextColor={C.creamDim}
+            value={searchQ}
+            onChangeText={setSearchQ}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {searchQ.length > 0 && (
+            <TouchableOpacity onPress={()=>setSearchQ('')}>
+              <Ionicons name="close-circle" size={18} color={C.creamDim}/>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
       {loading?<View style={s.center}><ActivityIndicator color={C.amber}/></View>:(
-        <FlatList data={board} keyExtractor={i=>String(i.user_id)} renderItem={renderItem}
+        <FlatList data={filteredBoard} keyExtractor={i=>String(i.user_id)} renderItem={renderItem}
           contentContainerStyle={{padding:16,paddingBottom:20}}
           refreshControl={<RefreshControl refreshing={refreshing} tintColor={C.amber} colors={[C.amber]}
             onRefresh={()=>{setRefr(true);load(true);}}/>}
           ListFooterComponent={<AdBanner/>}
-          ListEmptyComponent={<View style={s.empty}><Ionicons name="trophy-outline" size={60} color={C.border}/><Text style={s.emptyT}>Žádná data</Text></View>}
+          ListEmptyComponent={(
+            <View style={s.empty}>
+              <Ionicons name="trophy-outline" size={60} color={C.border}/>
+              <Text style={s.emptyT}>{searchQ ? 'Žádný uživatel nenalezen' : 'Žádná data'}</Text>
+            </View>
+          )}
         />
       )}
       {userModal&&<UserProfileModal username={userModal} selfId={user.id} onClose={()=>setUM(null)}/>}
@@ -3846,8 +4156,18 @@ const GalleryThumb = ({ item, size, onPress, onLike }) => {
 };
 
 // Community screen container with sub-tabs
-const CommunityScreen = ({ user }) => {
+const CommunityScreen = ({ user, deepLinkUsername, onDeepLinkHandled }) => {
   const [tab, setTab] = useState('leaderboard');
+  const [userModal, setUserModal] = useState(null);
+
+  // Handle deep link to user profile
+  useEffect(() => {
+    if (deepLinkUsername) {
+      setUserModal(deepLinkUsername);
+      onDeepLinkHandled?.();
+    }
+  }, [deepLinkUsername]);
+
 const SUB_TABS = [
     {key:'leaderboard', label:'Žebříček',   icon:'trophy-outline'},
     {key:'chat',        label:'Chaty',       icon:'chatbubbles-outline'},
@@ -3876,7 +4196,7 @@ const SUB_TABS = [
         {tab==='gallery'     && <GalleryTab user={user}/>}
 
       </View>
-
+      {userModal && <UserProfileModal username={userModal} selfId={user.id} onClose={()=>setUserModal(null)}/>}
     </View>
   );
 };
@@ -4534,7 +4854,7 @@ const ProfileScreen = ({ user, onLogout, onShowTutorial, onNavigate }) => {
 
       {/* Verze + sociální sítě + GDPR + Copyrighty */}
       <TouchableOpacity onPress={() => setGdprModalVisible(true)}>
-        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.5.0 (EXPERIMENTAL IMPLEMENTATION OF GOOGLE ADS) - GDPR & Copyright Info</Text>
+        <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:8,textDecorationLine:'underline'}}>Hospůdkobraní v1.5.2 - GDPR & Copyright Info</Text>
       </TouchableOpacity>
       <GdprInfoModal visible={gdprModalVisible} onClose={() => setGdprModalVisible(false)} />
       <Text style={{color:C.creamDim,fontSize:12,textAlign:'center',marginBottom:16}}>© 2026 Michal Schneider & Zuzka Smejkalová & Anna Bystřická - Všechna práva vyhrazena</Text>
@@ -4622,6 +4942,7 @@ export default function App() {
   const [boot, setBoot]   = useState(true);
   const [tab, setTab]     = useState('map');
   const [deepLinkPubId, setDeepLinkPubId] = useState(null);
+  const [deepLinkUsername, setDeepLinkUsername] = useState(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
   useEffect(() => { mobileAds().initialize().catch(() => {}); }, []);
@@ -4647,15 +4968,25 @@ export default function App() {
     })();
   },[]);
 
-  // Deep linking: handle incoming URLs (hospudkobrani://pub/123 or https://.../pub/123)
+  // Deep linking: handle incoming URLs (hospudkobrani://pub/123, user/jan or https://.../pub/123, /user/jan)
   useEffect(()=>{
     const parseAndHandle = (url) => {
       if(!url) return;
       try{
-        const m = String(url).match(/pub\/(\d+)/);
-        if(m && m[1]){
+        const urlStr = String(url);
+        // Support: hospudkobrani://pub/123, https://hospudkobrani.cz/pub/123, https://.../pub/123
+        const pubMatch = urlStr.match(/[\/#]pub\/(\d+)/i) || urlStr.match(/pub[=_](\d+)/i);
+        if(pubMatch && pubMatch[1]){
           setTab('map');
-          setDeepLinkPubId(m[1]);
+          setDeepLinkPubId(pubMatch[1]);
+          return;
+        }
+        // Support: hospudkobrani://user/jan, https://hospudkobrani.cz/user/jan, https://.../u/jan
+        const userMatch = urlStr.match(/[\/#]user\/([^/?&]+)/i) || urlStr.match(/[\/#]u\/([^/?&]+)/i);
+        if(userMatch && userMatch[1]){
+          setTab('community');
+          setDeepLinkUsername(decodeURIComponent(userMatch[1]));
+          return;
         }
       }catch(e){/* ignore */}
     };
@@ -4724,10 +5055,10 @@ export default function App() {
       <View style={{flex:1}}>
         {/* MapScreen zůstává namountovaný – předchází šedé obrazovce po přepnutí */}
         <View style={{flex:1,display: tab==='map' ? 'flex' : 'none'}}>
-          <MapScreen user={user} deepLinkPubId={deepLinkPubId} onDeepLinkHandled={()=>setDeepLinkPubId(null)}/>
+          <MapScreen key={user.id} user={user} deepLinkPubId={deepLinkPubId} onDeepLinkHandled={()=>setDeepLinkPubId(null)}/>
         </View>
         {tab==='visits'     && <VisitsScreen user={user}/>}
-        {tab==='community'  && <CommunityScreen user={user}/>}
+        {tab==='community'  && <CommunityScreen user={user} deepLinkUsername={deepLinkUsername} onDeepLinkHandled={()=>setDeepLinkUsername(null)}/>}
         {tab==='challenges' && <ChallengesScreen user={user}/>}
         {tab==='profile'    && <ProfileScreen user={user} onLogout={()=>setUser(null)} onShowTutorial={()=>setShowTutorial(true)} onNavigate={setTab}/>}
       </View>
@@ -4945,4 +5276,14 @@ const s = StyleSheet.create({
   mockText: {color:C.creamDim,fontSize:15,textAlign:'center',marginBottom:28,lineHeight:22},
   mockAdminBanner: {position:'absolute',top:0,left:0,right:0,backgroundColor:C.amber,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:8,gap:8,zIndex:999},
   mockAdminBannerT: {color:C.bg,fontSize:13,fontWeight:'700',flex:1},
+
+  // Pubs List Modal
+  pubListItem: {backgroundColor:C.bgCard,borderRadius:12,padding:12,marginBottom:8,borderWidth:1,borderColor:C.border},
+  pubListItemVisited: {borderColor:C.green,borderWidth:1.5},
+  pubListIcon: {width:36,height:36,borderRadius:18,alignItems:'center',justifyContent:'center'},
+  pubListName: {color:C.cream,fontWeight:'700',fontSize:15},
+  pubListMeta: {color:C.creamDim,fontSize:12,marginTop:2},
+  pubListFilterBtn: {flexDirection:'row',alignItems:'center',paddingHorizontal:12,paddingVertical:8,borderRadius:20,borderWidth:1,borderColor:C.border,backgroundColor:C.bgCard},
+  pubListFilterBtnActive: {backgroundColor:C.amber,borderColor:C.amber},
+  pubListFilterBtnText: {color:C.creamDim,fontSize:12,fontWeight:'600'},
 });
