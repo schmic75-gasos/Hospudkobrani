@@ -85,7 +85,8 @@
           "androidAppId": "ca-app-pub-2764641499857589~3265060801",
           "iosAppId": "ca-app-pub-2764641499857589~3265060801"
         }
-      ]
+      ],
+      "expo-background-task"
     ],
     "extra": {
       "eas": {
