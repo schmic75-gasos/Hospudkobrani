@@ -1,0 +1,43 @@
+            {'GDPR INFORMACE\n\n'}
+            {'Tato aplikace shromažďuje osobní údaje v souladu s GDPR (Nařízení EU 2016/679).\n\n'}
+            {'SHROMAŽĎOVANÉ ÚDAJE\n'}
+            {'- Uživatelské jméno, e-mail, hashované heslo\n'}
+            {'- Přibližná poloha zařízení (pouze pro mapové a navigační funkce, není trvale ukládána)\n'}
+            {'- Fotografie nahrané uživatelem (profilovka, hospůdky)\n'}
+            {'- Záznamy o návštěvách hospůdek (hodnocení, poznámky, datum, způsob dopravy)\n'}
+            {'- Statistiky aktivit a plněné výzvy\n'}
+            {'- Push token pro zasílání notifikací\n\n'}
+            {'TELEMETRIE A TECHNICKÁ DATA\n'}
+            {'Aplikace sbírá anonymizovaná telemetrická data za účelem zlepšení stability a uživatelského zážitku. Tato data zahrnují: typ události (např. otevření aplikace, synchronizace návštěv, chyba), verzi aplikace, typ a verzi operačního systému, rozlišení a orientaci obrazovky, model a výrobce zařízení. Telemetrická data nejsou přímo identifikující (neobsahují jméno ani e-mail). Ke každé události je volitelně přiřazeno anonymní ID uživatele pro analýzu chybových stavů. Odesílání telemetrie lze kdykoli vypnout v sekci Profil → Nastavení → Odesílání telemetrie.\n\n'}
+            {'FOTOGRAFIE A SOUKROMÍ\n'}
+            {'Fotografie nahrané k návštěvám hospůdek nebo jako profilovka jsou ukládány na zabezpečeném serveru. Viditelnost závisí na nastavení:\n'}
+            {'- Veřejné fotky: viditelné všem uživatelům v galerii a na profilu\n'}
+            {'- Soukromé fotky: viditelné pouze tobě\n'}
+            {'- Profilovka: veřejná nebo pouze pro sledující (nastavitelné v Profil → Nastavení)\n'}
+            {'Uživatel může kdykoli smazat vlastní fotografie přímo v aplikaci.\n\n'}
+            {'NASTAVENÍ SOUKROMÍ PROFILU\n'}
+            {'V sekci Profil → Nastavení lze ovládat:\n'}
+            {'- Viditelnost profilové fotky (veřejná / pouze sledující)\n'}
+            {'- Zobrazení data registrace na veřejném profilu\n'}
+            {'- Zobrazení seznamu návštěv na veřejném profilu\n'}
+            {'- Ukládání poslední polohy mapy\n'}
+            {'- Odesílání anonymní telemetrie\n\n'}
+            {'SDÍLENÍ ÚDAJŮ\n'}
+            {'Údaje jsou ukládány na serveru provozovaném Rosti.cz a nejsou aktivně sdíleny s třetími stranami. Mapová data pocházejí od Mapbox (Mapbox Terms of Service) a GraphHopper (Apache 2.0). Trasování se zpracovává na straně klienta, GPS souřadnice nejsou trvale ukládány.\n\n'}
+            {'PODMÍNKY POUŽITÍ\n'}
+            {'- Aplikace nepodniká aktivní kontrolu věku. Pokud hráč mladší 18 let navštíví hospodu a konzumuje alkohol, odpovědnost za dodržení zákonného věku nese výhradně provozovatel podniku.\n'}
+            {'- Obsah nahraný uživatelem musí být v souladu s platnými zákony a nesmí obsahovat nevhodný, urážlivý ani nelegální materiál.\n'}
+            {'- Podniky jsou samostatnými subjekty a musí dodržovat místní zákony.\n\n'}
+            {'Majitelé podniků mohou požádat o opravu, aktualizaci nebo výmaz záznamu. Požadavky zasílejte na noemiamisa@gmail.com.\n\n'}
+            {'PRÁVA UŽIVATELE\n'}
+            {'- Právo na přístup k osobním údajům\n'}
+            {'- Právo na opravu nesprávných údajů\n'}
+            {'- Právo na výmaz (smazání účtu přímo v nastavení profilu)\n'}
+            {'- Právo na přenositelnost dat\n'}
+            {'- Kontakt: noemiamisa@gmail.com\n\n'}
+            {'COPYRIGHTY\n\n'}
+            {'© Mapbox a OpenStreetMap contributors – Mapové dlaždice a data\n'}
+            {'© GraphHopper – Směrovací služby\n'}
+            {'© React Native & Expo – Framework\n'}
+            {'© Michal Schneider – Kód aplikace, styl mapy apod.\n\n'}
+            {'Všechna práva vyhrazena.'}
