@@ -1,6 +1,6 @@
 {
   "name": "hospudkobrani",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "author": "Michal Schneider",
   "main": "expo/AppEntry.js",
   "scripts": {
